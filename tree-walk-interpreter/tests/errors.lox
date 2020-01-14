@@ -1,0 +1,5 @@
+print a;
+print a=2;
+print a+4;
+print "HOLA";
+var a;

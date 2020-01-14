@@ -1,0 +1,20 @@
+class DevonshireCream {
+  serveOn() {
+    return "Scones";
+  }
+  echo(a) {
+    return a;
+  }
+}
+
+var c = DevonshireCream();
+c.test = 1;
+print c.test;
+c.testFunction = fun () {
+    print "Scones!";
+};
+c.testFunction();
+print c.serveOn();
+print c.echo("hola");
+var a = 1;
+a.test = 1;

@@ -1,0 +1,5 @@
+print "HOLA" or "CHAU";
+print nil or "HOLA";
+print "HOLA" or false;
+print false or "HOLA";
+print nil or nil;

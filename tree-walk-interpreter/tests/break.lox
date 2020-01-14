@@ -1,0 +1,51 @@
+var i = 0;
+print "CACA";
+while (i < 5) {
+  print "HOLA";
+  break;
+  i = i + 1;
+}
+
+print "CHAU";
+
+for (var i = 0; i < 5; i = i + 1) {
+  print "HOLA0";
+  break;
+}
+
+print "CHAU0";
+
+for (var i = 0; i < 5; i = i + 1) {
+  print "HOLA1";
+  if (i == 1) break;
+  print "HOLA1.1";
+}
+
+print "CHAU1";
+
+for (var i = 0; i < 5; i = i + 1) {
+  print "HOLA2";
+  for (var i = 0; i < 5; i = i + 1) {
+    print "INNER HOLA2";
+    break;
+  }
+  print "AFTER INNER HOLA2";
+  break;
+  print "DO NOT SEE2";
+}
+
+print "CHAU2";
+
+for (var i = 0; i < 5; i = i + 1) {
+  print "HOLA3";
+  for (var i = 0; i < 5; i = i + 1) {
+    print "INNER HOLA3";
+    if (i == 1) break;
+    print "SEE ONCE3";
+  }
+  print "AFTER INNER HOLA3";
+  break;
+  print "DO NOT SEE3";
+}
+
+print "CHAU3";

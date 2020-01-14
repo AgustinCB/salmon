@@ -1,0 +1,5 @@
+print "HOLA";
+var a=nil;
+print a;
+print a=2;
+print a+4;

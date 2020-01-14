@@ -1,0 +1,7 @@
+var counter = 0;
+
+while (counter < 5) {
+    print "HOLA";
+    counter = counter + 1;
+}
+print "CHAU";

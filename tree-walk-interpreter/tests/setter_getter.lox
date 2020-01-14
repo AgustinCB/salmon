@@ -1,0 +1,13 @@
+class Test {
+    setter prop(a) {
+        this.secret = a;
+    }
+
+    getter prop() {
+        return this.secret;
+    }
+}
+
+var t = Test();
+t.prop = "HOLA";
+print t.prop;

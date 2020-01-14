@@ -1,0 +1,15 @@
+if (true)
+  print "HOLA";
+else
+  print "CHAU";
+
+if (false)
+  print "HOLA";
+else
+  print "CHAU";
+
+if (true)
+  if (false)
+    print "HOLA";
+  else
+    print "CHAU";

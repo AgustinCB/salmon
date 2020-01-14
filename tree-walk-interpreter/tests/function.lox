@@ -1,0 +1,12 @@
+fun test () {
+  print "hola";
+}
+
+fun test1(num, num1) {
+  print num + num1;
+}
+
+test1(1, 2);
+
+test();
+

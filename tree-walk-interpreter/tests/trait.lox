@@ -1,0 +1,31 @@
+trait Test {
+    test(a);
+    class staticmethod();
+    getter prop();
+    setter prop(a);
+}
+
+class TestImpl {
+    pepe() {}
+}
+
+trait Test for TestImpl {
+    test(a) {
+        print a;
+    }
+    class staticmethod() {
+        print "static";
+    }
+    getter prop() {
+        print this.a;
+    }
+    setter prop(a) {
+        this.a = a;
+    }
+}
+
+var obj = TestImpl();
+obj.test("method");
+TestImpl.staticmethod();
+obj.prop = "apa";
+print obj.prop;
