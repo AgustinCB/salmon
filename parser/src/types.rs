@@ -62,6 +62,7 @@ pub enum TokenType {
     Setter,
     Getter,
     Trait,
+    Import,
     Identifier { name: String },
     TokenLiteral { value: Literal },
 }
@@ -83,7 +84,8 @@ impl Display for ProgramError {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         f.write_str(
             format!(
-                "There was an error! [line {}] Error: {}",
+                "There was an error! [file {} line {}] Error: {}",
+                self.location.file,
                 self.location.line + 1,
                 self.message
             )
@@ -157,6 +159,10 @@ pub enum ExpressionType {
     },
     ExpressionLiteral {
         value: Literal,
+    },
+    ModuleLiteral {
+        module: String,
+        field: Box<Expression>,
     },
     VariableLiteral {
         identifier: String,
@@ -272,6 +278,13 @@ pub enum StatementType {
     Return {
         value: Option<Expression>,
     },
+    Import {
+        name: String,
+    },
     Break,
     EOF,
+}
+
+pub trait Pass<'a> {
+    fn run(&mut self, ss: &'a [Statement]) -> Result<(), Vec<ProgramError>>;
 }

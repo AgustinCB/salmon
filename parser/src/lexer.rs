@@ -126,6 +126,7 @@ impl Lexer {
                         "setter" => Some(self.create_token(TokenType::Setter, "setter")),
                         "getter" => Some(self.create_token(TokenType::Getter, "getter")),
                         "trait" => Some(self.create_token(TokenType::Trait, "trait")),
+                        "import" => Some(self.create_token(TokenType::Import, "import")),
                         "true" => Some(self.create_token(
                             TokenType::TokenLiteral {
                                 value: Literal::Keyword(DataKeyword::True),
@@ -222,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_lexer_with_no_error() {
-        let s = "(){}:,.-+;/!*!=;=;==>>=<<=;and;class;else;fun;for;break;if;or;print?return;;var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;getter;trait[]";
+        let s = "(){}:,.-+;/!*!=;=;==>>=<<=;and;class;else;fun;for;break;if;or;print?return;;var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;getter;trait[];import";
         let mut lexer = Lexer::new(s.to_owned(), "file".to_owned());
         let expected = Ok(vec![
             Token {
@@ -744,6 +745,24 @@ mod tests {
             Token {
                 token_type: TokenType::RightSquareBrace,
                 lexeme: "]".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5
+
+                    ,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Import,
+                lexeme: "import".to_owned(),
                 location: SourceCodeLocation {
                     file: "file".to_owned(),
                     line: 5,

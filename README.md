@@ -15,13 +15,13 @@ declaration → classDecl
 	        | varDecl
             | statement ;
 
-classDecl   → "class" IDENTIFIER ( "<" IDENTIFIER )?
+classDecl   → "class" IDENTIFIER ( "<" modIdentifier )?
               "{" ( ( "class" | "setter" | "getter" )? function )* "}" ;
 
 traitDecl   → "trait" IDENTIFIER
               "{" ( ( "class" | "setter" | "getter" )? functionHeader )* "}" ;
 
-traitImpl   → "trait" IDENTIFIER "for" IDENTIFIER
+traitImpl   → "trait" modIdentifier "for" modIdentifier
               "{" ( ( "class" | "setter" | "getter" )? function )* "}" ;
 
 declWithBreak   → varDecl
@@ -33,7 +33,8 @@ statement       → exprStmt
                 | printStmt
                 | whileStmt
                 | returnStmt
-                | block ;
+                | block
+                | import ;
 
 stmtWithBreak   → exprStmt
                 | forStmt
@@ -42,8 +43,10 @@ stmtWithBreak   → exprStmt
                 | whileStmt
                 | returnStmt
                 | blockWithBreak
-                | breakStmt ;
+                | breakStmt
+                | import ;
 
+import          → "import" IDENTIFIER ;
 breakStmt       → break ";" ;
 forStmt         → "for" "(" ( varDecl | exprStmt | ";" )
                      expression? ";"
@@ -74,11 +77,12 @@ comparison      → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
 addition        → multiplication ( ( "-" | "+" ) multiplication )* ;
 multiplication  → unary ( ( "/" | "*" ) unary )* ;
 unary           → ( "!" | "-" ) unary
-                | arrayElement ;
+                | call ;
 call            → arrayElement ( "(" arguments? ")" | "." IDENTIFIER )* ;
 arguments       → ternary ( "," ternary )* ;
 arrayElement    → primary ( "[" expression "]" )?
-primary         → NUMBER | STRING | "false" | "true" | "nil"
+primary         → modIdentifier
+                | NUMBER | STRING | "false" | "true" | "nil"
                 | "[" expression ";" expression "]"
                 | "[" ( expression "," ) ? expression "]"
                 | "fun" "(" parameters? ")" block
@@ -87,4 +91,5 @@ primary         → NUMBER | STRING | "false" | "true" | "nil"
                 | ( ">" | ">=" | "<" | "<=" ) comparison
                 | ( "+" ) addition
                 | ( "/" | "*" ) multiplication ;
+modIdentifier   | ( IDENTIFIER "::" )* IDENTIFIER ;
 ```

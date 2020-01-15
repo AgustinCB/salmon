@@ -55,6 +55,21 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             }) => self.parse_trait_statement(&location),
             Some(Token {
                 location,
+                token_type: TokenType::Import,
+                ..
+            }) => {
+                self.next();
+                let module = self.parse_identifier()?;
+                self.consume(TokenType::Semicolon, "Expected `;` at the end of statement.", &location)?;
+                Ok(Statement {
+                    location,
+                    statement_type: StatementType::Import {
+                        name: module,
+                    },
+                })
+            }
+            Some(Token {
+                location,
                 token_type: TokenType::Class,
                 ..
             }) => self.parse_class_statement(&location),
@@ -239,17 +254,14 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         trait_name: String,
         location: &SourceCodeLocation,
     ) -> Result<Statement, ProgramError> {
+        let trait_name = self.parse_variable_or_module_access(trait_name, &location)?;
         self.consume(TokenType::For, "Expected 'for' after trait name", location)?;
         let class_name = if let Some(Token {
             token_type: TokenType::Identifier { name },
             location,
             ..
-        }) = self.next()
-        {
-            Ok(self.expression_factory.borrow_mut().new_expression(
-                ExpressionType::VariableLiteral { identifier: name },
-                location,
-            ))
+        }) = self.next() {
+            self.parse_variable_or_module_access(name, &location)
         } else {
             Err(ProgramError {
                 location: location.clone(),
@@ -274,12 +286,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 methods: method_set.methods,
                 setters: method_set.setters,
                 static_methods: method_set.static_methods,
-                trait_name: self.expression_factory.borrow_mut().new_expression(
-                    ExpressionType::VariableLiteral {
-                        identifier: trait_name,
-                    },
-                    location.clone(),
-                ),
+                trait_name,
                 class_name,
             },
         })
@@ -339,10 +346,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             let superclass = if self.peek(TokenType::Less) {
                 self.next();
                 if let Some(TokenType::Identifier { name }) = self.next().map(|t| t.token_type) {
-                    Some(self.expression_factory.borrow_mut().new_expression(
-                        ExpressionType::VariableLiteral { identifier: name },
-                        location.clone(),
-                    ))
+                    Some(self.parse_variable_or_module_access(name, &location)?)
                 } else {
                     return Err(ProgramError {
                         message: "Expect superclass name.".to_owned(),
@@ -997,9 +1001,9 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 token_type: TokenType::Identifier { name },
                 ..
             }) => Ok(name),
-            Some(Token { location, .. }) => Err(ProgramError {
+            Some(Token { location, token_type, .. }) => Err(ProgramError {
                 location,
-                message: "Expected identifier!".to_owned(),
+                message: format!("Expected identifier! Got {:?}", token_type),
             }),
             None => panic!("Can't happen"),
         }
@@ -1052,10 +1056,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 token_type: TokenType::Identifier { name },
                 location,
                 ..
-            }) => Ok(self.expression_factory.borrow_mut().new_expression(
-                ExpressionType::VariableLiteral { identifier: name },
-                location,
-            )),
+            }) => self.parse_variable_or_module_access(name, &location),
             Some(Token {
                 token_type: TokenType::LeftParen,
                 location,
@@ -1073,6 +1074,26 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 location,
                 lexeme,
             }) => self.parse_left_side_missing(token_type, location, lexeme),
+        }
+    }
+
+    fn parse_variable_or_module_access(&self, name: String, location: &SourceCodeLocation) -> Result<Expression, ProgramError> {
+        if self.peek(TokenType::Colon) {
+            self.consume(TokenType::Colon, "Expected `::` on module access", location)?;
+            self.consume(TokenType::Colon, "Expected `::` on module access", location)?;
+            let field = Box::new(self.parse_call()?);
+            Ok(self.expression_factory.borrow_mut().new_expression(
+                ExpressionType::ModuleLiteral {
+                    module: name,
+                    field,
+                },
+                location.clone(),
+            ))
+        } else {
+            Ok(self.expression_factory.borrow_mut().new_expression(
+                ExpressionType::VariableLiteral { identifier: name },
+                location.clone(),
+            ))
         }
     }
 

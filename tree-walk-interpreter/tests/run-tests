@@ -6,4 +6,4 @@ ROOT=$(dirname "$(readlink -f "$0")")
 
 cargo build
 
-ls -1 "$ROOT"/*.lox | tr '\n' '\0' | xargs -0 -I {} "$ROOT"/run-test {}
+ls -1 "$ROOT"/*.sa | tr '\n' '\0' | xargs -0 -I {} "$ROOT"/run-test {}

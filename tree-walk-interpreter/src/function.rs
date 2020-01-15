@@ -1,7 +1,7 @@
 use crate::class::LoxObject;
 use crate::interpreter::Evaluable;
 use crate::state::State;
-use crate::value::Value;
+use crate::value::{Value, LoxModule};
 use parser::types::{ProgramError, SourceCodeLocation, Statement};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -21,6 +21,7 @@ impl LoxFunction {
         &self,
         values: &[Value],
         locals: &HashMap<usize, usize>,
+        imports: &HashMap<String, LoxModule>,
     ) -> Result<Value, ProgramError> {
         if self.arguments.len() != values.len() {
             return Err(ProgramError {
@@ -39,7 +40,7 @@ impl LoxFunction {
         }
         current_state.in_function = true;
         for st in self.body.iter() {
-            current_state = st.evaluate(current_state, locals)?.0;
+            current_state = st.evaluate(current_state, locals, imports)?.0;
             if let Some(return_value) = &current_state.return_value {
                 let value = (**return_value).clone();
                 return Ok(value);

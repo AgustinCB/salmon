@@ -1,5 +1,5 @@
 use crate::function::LoxFunction;
-use crate::value::Value;
+use crate::value::{Value, LoxModule};
 use parser::types::{ProgramError, SourceCodeLocation, Statement, StatementType};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -236,13 +236,14 @@ impl LoxObject {
         &self,
         values: &[Value],
         locals: &HashMap<usize, usize>,
+        imports: &HashMap<String, LoxModule>,
         location: &SourceCodeLocation,
     ) -> Result<(), ProgramError> {
         if let Some(s) = &self.superclass {
-            s.init(values, locals, location)?;
+            s.init(values, locals, imports, location)?;
         }
         if let Some(Value::Function(f)) = self.properties.borrow().get("init") {
-            f.eval(values, locals)?;
+            f.eval(values, locals, imports)?;
             Ok(())
         } else if values.len() != 0 {
             Err(ProgramError {

@@ -6,6 +6,14 @@ use std::convert::TryInto;
 use std::fmt::{Display, Error, Formatter};
 use std::ops::{Neg, Not};
 use std::rc::Rc;
+use crate::state::State;
+use std::collections::HashMap;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct LoxModule {
+    pub state: State,
+    pub locals: HashMap<usize, usize>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value {
@@ -34,6 +42,7 @@ pub enum Value {
         capacity: usize,
         elements: Rc<RefCell<Vec<Box<Value>>>>,
     },
+    Module(LoxModule),
 }
 
 impl Value {
@@ -169,6 +178,7 @@ impl Display for Value {
                 }
                 f.write_str("]")
             }
+            Value::Module(_) => f.write_str("[Module]"),
         }
     }
 }

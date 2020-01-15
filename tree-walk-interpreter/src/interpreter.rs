@@ -1,7 +1,7 @@
 use crate::class::{LoxClass, LoxObject};
 use crate::function::LoxFunction;
 use crate::state::State;
-use crate::value::{Value, ValueError};
+use crate::value::{Value, ValueError, LoxModule};
 use parser::resolver::WithScopedVariables;
 use parser::types::{
     Expression, ExpressionType, FunctionHeader, ProgramError, SourceCodeLocation, Statement,
@@ -13,6 +13,7 @@ use std::convert::TryInto;
 use std::iter::FromIterator;
 use std::ops::{Add, Div, Mul, Sub};
 use std::rc::Rc;
+use parser::importer::WithImports;
 
 pub type EvaluationResult = Result<(State, Value), ProgramError>;
 
@@ -22,14 +23,15 @@ fn array_element_expression_set(
     value: &Expression,
     state: State,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (ns, array_value) = array.evaluate(state, locals)?;
+    let (ns, array_value) = array.evaluate(state, locals, imports)?;
     if let Value::Array { elements, capacity } = array_value {
-        let (ns, index_value) = index.evaluate(ns, locals)?;
+        let (ns, index_value) = index.evaluate(ns, locals, imports)?;
         if let Value::Number { value: index_value } = index_value {
             if index_value - index_value as usize as f32 == 0f32 {
                 if (index_value as usize) < capacity {
-                    let (ns, value) = value.evaluate(ns, locals)?;
+                    let (ns, value) = value.evaluate(ns, locals, imports)?;
                     elements.borrow_mut()[index_value as usize] = Box::new(value.clone());
                     Ok((ns, value))
                 } else {
@@ -57,10 +59,11 @@ fn array_element_expression(
     index: &Expression,
     state: State,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (ns, array_value) = array.evaluate(state, locals)?;
+    let (ns, array_value) = array.evaluate(state, locals, imports)?;
     if let Value::Array { elements, capacity } = array_value {
-        let (ns, index_value) = index.evaluate(ns, locals)?;
+        let (ns, index_value) = index.evaluate(ns, locals, imports)?;
         if let Value::Number { value: index_value } = index_value {
             if index_value - index_value as usize as f32 == 0f32 {
                 if (index_value as usize) < capacity {
@@ -91,9 +94,10 @@ fn div_expressions(
     right: &Expression,
     location: &SourceCodeLocation,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (s, left_value) = left.evaluate(state, locals)?;
-    let (final_state, right_value) = right.evaluate(s, locals)?;
+    let (s, left_value) = left.evaluate(state, locals, imports)?;
+    let (final_state, right_value) = right.evaluate(s, locals, imports)?;
     match right_value {
         Value::Number { value } if value == 0f32 => {
             Err(right.create_program_error("Division by zero!"))
@@ -111,10 +115,11 @@ fn add_expressions(
     right: &Expression,
     location: &SourceCodeLocation,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (s, left_value) = left.evaluate(state, locals)?;
+    let (s, left_value) = left.evaluate(state, locals, imports)?;
     if left_value.is_number() {
-        let (final_state, right_value) = right.evaluate(s, locals)?;
+        let (final_state, right_value) = right.evaluate(s, locals, imports)?;
         math_operation(left_value, right_value, f32::add)
             .map(|v| (final_state, v))
             .map_err(|e| e.into_program_error(location))
@@ -122,7 +127,7 @@ fn add_expressions(
         let left_string: String = left_value
             .try_into()
             .map_err(|e: ValueError| e.into_program_error(location))?;
-        let (final_state, right_value) = right.evaluate(s, locals)?;
+        let (final_state, right_value) = right.evaluate(s, locals, imports)?;
         let right_string: String = right_value
             .try_into()
             .map_err(|e: ValueError| e.into_program_error(location))?;
@@ -160,9 +165,10 @@ fn value_math_operation(
     location: &SourceCodeLocation,
     op: fn(f32, f32) -> f32,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (s, left_value) = left.evaluate(state, locals)?;
-    let (final_state, right_value) = right.evaluate(s, locals)?;
+    let (s, left_value) = left.evaluate(state, locals, imports)?;
+    let (final_state, right_value) = right.evaluate(s, locals, imports)?;
     math_operation(left_value, right_value, op)
         .map(|v| (final_state, v))
         .map_err(|e| e.into_program_error(location))
@@ -175,9 +181,10 @@ fn value_comparison_operation(
     location: &SourceCodeLocation,
     op: fn(f32, f32) -> bool,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (s, left_value) = left.evaluate(state, locals)?;
-    let (final_state, right_value) = right.evaluate(s, locals)?;
+    let (s, left_value) = left.evaluate(state, locals, imports)?;
+    let (final_state, right_value) = right.evaluate(s, locals, imports)?;
     comparison_operation(left_value, right_value, op)
         .map(|v| (final_state, v))
         .map_err(|e| e.into_program_error(location))
@@ -188,9 +195,10 @@ fn eq_expressions(
     left: &Expression,
     right: &Expression,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (next_state, left_value) = left.evaluate(state, locals)?;
-    let (final_state, right_value) = right.evaluate(next_state, locals)?;
+    let (next_state, left_value) = left.evaluate(state, locals, imports)?;
+    let (final_state, right_value) = right.evaluate(next_state, locals, imports)?;
     Ok((
         final_state,
         Value::Boolean {
@@ -205,14 +213,15 @@ fn conditional_expression(
     then_branch: &Expression,
     else_branch: &Expression,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (s, condition) = condition.evaluate(state, locals)?;
+    let (s, condition) = condition.evaluate(state, locals, imports)?;
     if condition.is_truthy() {
         then_branch
     } else {
         else_branch
     }
-    .evaluate(s, locals)
+    .evaluate(s, locals, imports)
 }
 
 fn boolean_expression(
@@ -221,9 +230,10 @@ fn boolean_expression(
     right: &Expression,
     op: fn(Value, Value) -> Value,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (s, left_value) = left.evaluate(state, locals)?;
-    let (final_state, right_value) = right.evaluate(s, locals)?;
+    let (s, left_value) = left.evaluate(state, locals, imports)?;
+    let (final_state, right_value) = right.evaluate(s, locals, imports)?;
     Ok((final_state, op(left_value, right_value)))
 }
 
@@ -234,10 +244,11 @@ fn variable_assignment(
     expression: &Expression,
     location: &SourceCodeLocation,
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
     match locals.get(&id) {
         Some(env) => {
-            let (s, value) = expression.evaluate(state, locals)?;
+            let (s, value) = expression.evaluate(state, locals, imports)?;
             s.assign_at(*env, name, &value);
             Ok((s, value))
         }
@@ -253,19 +264,20 @@ fn call_expression(
     callee: &Expression,
     arguments: &[Box<Expression>],
     locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (next_state, function_value) = callee.evaluate(state, locals)?;
+    let (next_state, function_value) = callee.evaluate(state, locals, imports)?;
     match function_value {
         Value::Class(c) => {
             let instance = LoxObject::new(c);
             let mut values = vec![];
             let mut current_state = next_state;
             for e in arguments {
-                let (value_status, value) = e.evaluate(current_state, locals)?;
+                let (value_status, value) = e.evaluate(current_state, locals, imports)?;
                 current_state = value_status;
                 values.push(value);
             }
-            instance.init(&values, locals, &callee.location)?;
+            instance.init(&values, locals, imports, &callee.location)?;
             Ok((current_state, Value::Object(instance)))
         }
         Value::Function(f) if f.arguments.len() != arguments.len() => Err(callee
@@ -281,11 +293,11 @@ fn call_expression(
             let mut values = vec![];
             let mut current_state = next_state;
             for e in arguments {
-                let (value_status, value) = e.evaluate(current_state, locals)?;
+                let (value_status, value) = e.evaluate(current_state, locals, imports)?;
                 current_state = value_status;
                 values.push(value);
             }
-            f.eval(&values, locals).map(|v| (current_state, v))
+            f.eval(&values, locals, imports).map(|v| (current_state, v))
         }
         _ => Err(callee.create_program_error("Only functions or classes can be called!")),
     }
@@ -327,15 +339,16 @@ fn get_property(
     locals: &HashMap<usize, usize>,
     callee: &Expression,
     property: &String,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (next_state, object) = callee.evaluate(state, locals)?;
+    let (next_state, object) = callee.evaluate(state, locals, imports)?;
     match object {
         Value::Object(instance) => {
             if let Some(v) = instance.get(property) {
                 Ok((next_state, v))
             } else {
                 if let Some(v) = instance.get_getter(property) {
-                    v.eval(&[], locals).map(|v| (next_state, v))
+                    v.eval(&[], locals, imports).map(|v| (next_state, v))
                 } else {
                     Err(callee
                         .create_program_error(format!("Undefined property {}.", property).as_str()))
@@ -360,12 +373,13 @@ fn set_property(
     callee: &Expression,
     property: &String,
     value: &Expression,
+    imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (ts, object) = callee.evaluate(state, locals)?;
+    let (ts, object) = callee.evaluate(state, locals, imports)?;
     if let Value::Object(mut instance) = object {
-        let (final_state, value) = value.evaluate(ts, locals)?;
+        let (final_state, value) = value.evaluate(ts, locals, imports)?;
         if let Some(f) = instance.get_setter(property) {
-            f.eval(&[value], locals).map(|v| (final_state, v))
+            f.eval(&[value], locals, imports).map(|v| (final_state, v))
         } else {
             instance.set(property.clone(), value.clone());
             Ok((final_state, value))
@@ -431,6 +445,7 @@ fn check_trait_methods(
 pub struct Interpreter {
     content: Vec<Statement>,
     locals: HashMap<usize, usize>,
+    modules: HashMap<String, LoxModule>
 }
 
 impl Interpreter {
@@ -438,6 +453,7 @@ impl Interpreter {
         Interpreter {
             content,
             locals: HashMap::default(),
+            modules: HashMap::default(),
         }
     }
 
@@ -445,17 +461,17 @@ impl Interpreter {
         &self.content
     }
 
-    pub fn run(&self) -> Result<(), ProgramError> {
+    pub fn run(&self) -> Result<State, ProgramError> {
         let mut current_state = State::default();
         for s in self.content.iter() {
-            match s.evaluate(current_state, &self.locals) {
+            match s.evaluate(current_state, &self.locals, &self.modules) {
                 Ok((next_state, _)) => {
                     current_state = next_state;
                 }
                 Err(e) => return Err(e),
             }
         }
-        Ok(())
+        Ok(current_state)
     }
 }
 
@@ -465,24 +481,59 @@ impl WithScopedVariables for Interpreter {
     }
 }
 
+impl WithImports for Interpreter {
+    fn add_import(&mut self, name: &str, statements: Vec<Statement>, locals: &HashMap<usize, usize>) -> Result<(), Vec<ProgramError>> {
+        let mut interpreter = Interpreter::new(statements);
+        interpreter.locals = locals.clone();
+        let state = interpreter.run().map_err(|e| vec![e])?;
+        self.modules.insert(name.to_owned(), LoxModule {
+            locals: locals.clone(),
+            state,
+        });
+        Ok(())
+    }
+}
+
 pub trait Evaluable {
-    fn evaluate(&self, state: State, locals: &HashMap<usize, usize>) -> EvaluationResult;
+    fn evaluate(&self, state: State, locals: &HashMap<usize, usize>, imports: &HashMap<String, LoxModule>) -> EvaluationResult;
 }
 
 impl Evaluable for Expression {
-    fn evaluate(&self, state: State, locals: &HashMap<usize, usize>) -> EvaluationResult {
+    fn evaluate(&self, state: State, locals: &HashMap<usize, usize>, imports: &HashMap<String, LoxModule>) -> EvaluationResult {
         match &self.expression_type {
+            ExpressionType::ModuleLiteral {
+                module,
+                field,
+            } => {
+                let value = look_up_variable(self.id(), module, locals, &state)
+                    .ok_or_else(|| {
+                        self.create_program_error(&format!("Module `{}` not found!", module))
+                    })?
+                    .clone();
+                if let Value::Module(LoxModule {
+                    state: module_state, locals: module_locals,
+                }) = value {
+                    let (s, v) = field.evaluate(module_state, &module_locals, imports)?;
+                    state.assign_at(locals[&self.id()], module, &Value::Module(LoxModule {
+                        state: s,
+                        locals: module_locals,
+                    }));
+                    Ok((state, v))
+                } else {
+                    Err(self.create_program_error(&format!("Variable `{}` is not a module", module)))
+                }
+            }
             ExpressionType::ArrayElementSet {
                 array,
                 index,
                 value,
-            } => array_element_expression_set(array, index, value, state, locals),
+            } => array_element_expression_set(array, index, value, state, locals, imports),
             ExpressionType::ArrayElement { array, index } => {
-                array_element_expression(array, index, state, locals)
+                array_element_expression(array, index, state, locals, imports)
             }
             ExpressionType::RepeatedElementArray { element, length } => {
-                let (ns, element) = element.evaluate(state, locals)?;
-                let (ns, length) = length.evaluate(ns, locals)?;
+                let (ns, element) = element.evaluate(state, locals, imports)?;
+                let (ns, length) = length.evaluate(ns, locals, imports)?;
                 if let Value::Number { value: length } = length {
                     let elements = Rc::new(RefCell::new(vec![Box::new(element); length as _]));
                     Ok((
@@ -501,7 +552,7 @@ impl Evaluable for Expression {
                     elements
                         .iter()
                         .try_fold((state, vec![]), |(s, mut elements), e| {
-                            let (ns, e) = e.evaluate(s, locals)?;
+                            let (ns, e) = e.evaluate(s, locals, imports)?;
                             elements.push(Box::new(e));
                             Ok((ns, elements))
                         })?;
@@ -518,9 +569,9 @@ impl Evaluable for Expression {
                 callee,
                 property,
                 value,
-            } => set_property(state, locals, callee, property, value),
+            } => set_property(state, locals, callee, property, value, imports),
             ExpressionType::Get { callee, property } => {
-                get_property(state, locals, callee, property)
+                get_property(state, locals, callee, property, imports)
             }
             ExpressionType::ExpressionLiteral { value } => Ok((state, value.into())),
             ExpressionType::VariableLiteral { identifier } => {
@@ -538,12 +589,12 @@ impl Evaluable for Expression {
                     Ok((state, value))
                 }
             }
-            ExpressionType::Grouping { expression } => expression.evaluate(state, locals),
+            ExpressionType::Grouping { expression } => expression.evaluate(state, locals, imports),
             ExpressionType::Unary {
                 operand,
                 operator: TokenType::Minus,
             } => {
-                let (s, v) = operand.evaluate(state, locals)?;
+                let (s, v) = operand.evaluate(state, locals, imports)?;
                 if v.is_number() {
                     Ok((s, -v))
                 } else {
@@ -553,7 +604,7 @@ impl Evaluable for Expression {
             ExpressionType::Unary {
                 operand,
                 operator: TokenType::Bang,
-            } => operand.evaluate(state, locals).map(|(s, v)| (s, !v)),
+            } => operand.evaluate(state, locals, imports).map(|(s, v)| (s, !v)),
             ExpressionType::Unary { .. } => {
                 Err(self.create_program_error("Invalid unary operator"))
             }
@@ -561,22 +612,22 @@ impl Evaluable for Expression {
                 left,
                 right,
                 operator: TokenType::Plus,
-            } => add_expressions(state, left, right, &self.location, locals),
+            } => add_expressions(state, left, right, &self.location, locals, imports),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::Minus,
-            } => value_math_operation(state, left, right, &self.location, f32::sub, locals),
+            } => value_math_operation(state, left, right, &self.location, f32::sub, locals, imports),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::Slash,
-            } => div_expressions(state, left, right, &self.location, locals),
+            } => div_expressions(state, left, right, &self.location, locals, imports),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::Star,
-            } => value_math_operation(state, left, right, &self.location, f32::mul, locals),
+            } => value_math_operation(state, left, right, &self.location, f32::mul, locals, imports),
             ExpressionType::Binary {
                 left,
                 right,
@@ -588,6 +639,7 @@ impl Evaluable for Expression {
                 &self.location,
                 |f1, f2| f32::gt(&f1, &f2),
                 locals,
+                imports,
             ),
             ExpressionType::Binary {
                 left,
@@ -600,6 +652,7 @@ impl Evaluable for Expression {
                 &self.location,
                 |f1, f2| f32::ge(&f1, &f2),
                 locals,
+                imports,
             ),
             ExpressionType::Binary {
                 left,
@@ -612,6 +665,7 @@ impl Evaluable for Expression {
                 &self.location,
                 |f1, f2| f32::lt(&f1, &f2),
                 locals,
+                imports,
             ),
             ExpressionType::Binary {
                 left,
@@ -624,17 +678,18 @@ impl Evaluable for Expression {
                 &self.location,
                 |f1, f2| f32::le(&f1, &f2),
                 locals,
+                imports,
             ),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::EqualEqual,
-            } => eq_expressions(state, left, right, locals),
+            } => eq_expressions(state, left, right, locals, imports),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::BangEqual,
-            } => eq_expressions(state, left, right, locals).map(|(s, v)| (s, !v)),
+            } => eq_expressions(state, left, right, locals, imports).map(|(s, v)| (s, !v)),
             ExpressionType::Binary {
                 left,
                 right,
@@ -651,6 +706,7 @@ impl Evaluable for Expression {
                     }
                 },
                 locals,
+                imports
             ),
             ExpressionType::Binary {
                 left,
@@ -668,6 +724,7 @@ impl Evaluable for Expression {
                     }
                 },
                 locals,
+                imports,
             ),
             ExpressionType::Binary { .. } => {
                 Err(self.create_program_error("Invalid binary operator"))
@@ -676,7 +733,7 @@ impl Evaluable for Expression {
                 condition,
                 then_branch,
                 else_branch,
-            } => conditional_expression(state, condition, then_branch, else_branch, locals),
+            } => conditional_expression(state, condition, then_branch, else_branch, locals, imports),
             ExpressionType::VariableAssignment {
                 expression,
                 identifier,
@@ -687,9 +744,10 @@ impl Evaluable for Expression {
                 expression,
                 &self.location,
                 locals,
+                imports,
             ),
             ExpressionType::Call { callee, arguments } => {
-                call_expression(state, callee, arguments, locals)
+                call_expression(state, callee, arguments, locals, imports)
             }
             ExpressionType::AnonymousFunction { arguments, body } => {
                 anonymous_function(state, arguments, body, self.location.clone())
@@ -703,28 +761,38 @@ impl Evaluable for Statement {
         &self,
         mut state: State,
         locals: &HashMap<usize, usize>,
+        imports: &HashMap<String, LoxModule>,
     ) -> Result<(State, Value), ProgramError> {
         let state = match &self.statement_type {
             StatementType::EOF => state,
+            StatementType::Import { name, } => if let Some(module) = imports.get(name) {
+                state.insert_top(name.to_owned(), Value::Module(module.clone()));
+                state
+            } else {
+                return Err(ProgramError {
+                    message: format!("Failed to load module `{}`.", name),
+                    location: self.location.clone(),
+                });
+            },
             StatementType::If {
                 condition,
                 then,
                 otherwise,
             } => {
-                let (s, cond_value) = condition.evaluate(state, locals)?;
+                let (s, cond_value) = condition.evaluate(state, locals, imports)?;
                 if cond_value.is_truthy() {
-                    then.evaluate(s, locals)?.0
+                    then.evaluate(s, locals, imports)?.0
                 } else if let Some(o) = otherwise {
-                    o.evaluate(s, locals)?.0
+                    o.evaluate(s, locals, imports)?.0
                 } else {
                     s
                 }
             }
-            StatementType::Expression { expression } => expression.evaluate(state, locals)?.0,
+            StatementType::Expression { expression } => expression.evaluate(state, locals, imports)?.0,
             StatementType::Block { body } => {
                 state.push();
                 for st in body {
-                    let (s, _) = st.evaluate(state, locals)?;
+                    let (s, _) = st.evaluate(state, locals, imports)?;
                     state = s;
                     if state.broke_loop {
                         break;
@@ -735,7 +803,7 @@ impl Evaluable for Statement {
             }
             StatementType::VariableDeclaration { expression, name } => {
                 let (mut s, v) = if let Some(e) = expression {
-                    e.evaluate(state, locals)?
+                    e.evaluate(state, locals, imports)?
                 } else {
                     (state, Value::Uninitialized)
                 };
@@ -743,7 +811,7 @@ impl Evaluable for Statement {
                 s
             }
             StatementType::PrintStatement { expression } => {
-                let (s, v) = expression.evaluate(state, locals)?;
+                let (s, v) = expression.evaluate(state, locals, imports)?;
                 println!("{}", v);
                 s
             }
@@ -774,7 +842,7 @@ impl Evaluable for Statement {
                 static_methods,
                 trait_name,
             } => {
-                if let (state, Value::Class(class)) = class_name.evaluate(state, locals)? {
+                if let (state, Value::Class(class)) = class_name.evaluate(state, locals, imports)? {
                     if let (
                         ns,
                         Value::Trait {
@@ -784,7 +852,7 @@ impl Evaluable for Statement {
                             setters: trait_setters,
                             ..
                         },
-                    ) = trait_name.evaluate(state, locals)?
+                    ) = trait_name.evaluate(state, locals, imports)?
                     {
                         let methods = &methods.iter().map(|s| s.as_ref()).collect::<Vec<&_>>();
                         let static_methods = &static_methods
@@ -826,7 +894,7 @@ impl Evaluable for Statement {
                 superclass,
             } => {
                 let (mut state, superclass) = if let Some(e) = superclass {
-                    let (s, superclass) = e.evaluate(state, locals)?;
+                    let (s, superclass) = e.evaluate(state, locals, imports)?;
                     if let Value::Class(c) = superclass {
                         (s, Some(c))
                     } else {
@@ -883,7 +951,7 @@ impl Evaluable for Statement {
             StatementType::Return { value } if state.in_function => match value {
                 None => state,
                 Some(e) => {
-                    let (mut s, v) = e.evaluate(state, locals)?;
+                    let (mut s, v) = e.evaluate(state, locals, imports)?;
                     s.add_return_value(v);
                     s
                 }
@@ -897,11 +965,11 @@ impl Evaluable for Statement {
             StatementType::While { condition, action } => {
                 state.loop_count += 1;
                 while {
-                    let (s, v) = condition.evaluate(state, locals)?;
+                    let (s, v) = condition.evaluate(state, locals, imports)?;
                     state = s;
                     state.loop_count > 0 && v.is_truthy()
                 } {
-                    let (s, _) = action.evaluate(state, locals)?;
+                    let (s, _) = action.evaluate(state, locals, imports)?;
                     state = s;
                     if state.broke_loop {
                         break;

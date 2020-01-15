@@ -1,21 +1,21 @@
-use crate::types::{
-    Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType,
-};
+use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType, Pass};
 use std::collections::HashMap;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 pub trait WithScopedVariables {
     fn resolve_variable(&mut self, expression: &Expression, scope_id: usize);
 }
 
-pub struct Resolver<'a> {
+pub struct Resolver<'a, T: WithScopedVariables> {
     scopes: Vec<HashMap<String, bool>>,
     uses: Vec<HashMap<&'a str, usize>>,
     locations: Vec<HashMap<&'a str, &'a SourceCodeLocation>>,
-    interpreter: &'a mut dyn WithScopedVariables,
+    interpreter: Rc<RefCell<T>>,
 }
 
-impl<'a> Resolver<'a> {
-    pub fn new(interpreter: &'a mut dyn WithScopedVariables) -> Resolver<'a> {
+impl<'a, T: WithScopedVariables> Resolver<'a, T> {
+    pub fn new(interpreter: Rc<RefCell<T>>) -> Resolver<'a, T> {
         Resolver {
             interpreter,
             locations: vec![HashMap::default()],
@@ -82,7 +82,7 @@ impl<'a> Resolver<'a> {
         {
             let new_uses = self.uses[i][name] + 1;
             self.uses[i].insert(name, new_uses);
-            self.interpreter.resolve_variable(expression, i);
+            self.interpreter.borrow_mut().resolve_variable(expression, i);
         }
     }
     fn resolve_functions(
@@ -134,23 +134,13 @@ impl<'a> Resolver<'a> {
         self.uses.last_mut().unwrap().insert(variable, 1);
         Ok(())
     }
-}
-
-pub trait Pass<'a> {
-    fn run(&mut self, ss: &'a [Statement]) -> Result<(), Vec<ProgramError>>;
-    fn resolve(&mut self, statement: &'a Statement) -> Result<(), Vec<ProgramError>>;
-    fn resolve_expression(&mut self, expression: &'a Expression) -> Result<(), Vec<ProgramError>>;
-}
-
-impl<'a> Pass<'a> for Resolver<'a> {
-    fn run(&mut self, ss: &'a [Statement]) -> Result<(), Vec<ProgramError>> {
-        ss.iter()
-            .map(|s| self.resolve(&s))
-            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
-        Ok(())
-    }
     fn resolve(&mut self, statement: &'a Statement) -> Result<(), Vec<ProgramError>> {
         match &statement.statement_type {
+            StatementType::Import { name } => {
+                self.declare(name, &statement.location)
+                    .map_err(|e| vec![e])?;
+                self.define(name);
+            }
             StatementType::Block { body } => {
                 self.push_scope(HashMap::default());
                 body.iter()
@@ -185,6 +175,8 @@ impl<'a> Pass<'a> for Resolver<'a> {
                             }]);
                         }
                         self.resolve_local(e, identifier);
+                    } else {
+                        self.resolve_expression(e)?;
                     }
                 }
                 self.push_scope(HashMap::default());
@@ -268,6 +260,12 @@ impl<'a> Pass<'a> for Resolver<'a> {
 
     fn resolve_expression(&mut self, expression: &'a Expression) -> Result<(), Vec<ProgramError>> {
         match &expression.expression_type {
+            ExpressionType::ModuleLiteral {
+                module, field,
+            } => {
+                self.resolve_expression(field)?;
+                self.resolve_local(expression, module);
+            }
             ExpressionType::Get { callee, .. } => {
                 self.resolve_expression(callee)?;
             }
@@ -339,6 +337,15 @@ impl<'a> Pass<'a> for Resolver<'a> {
                 self.resolve_expression(value)?;
             }
         };
+        Ok(())
+    }
+}
+
+impl<'a, T: WithScopedVariables> Pass<'a> for Resolver<'a, T> {
+    fn run(&mut self, ss: &'a [Statement]) -> Result<(), Vec<ProgramError>> {
+        ss.iter()
+            .map(|s| self.resolve(&s))
+            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
         Ok(())
     }
 }

@@ -1,0 +1,15 @@
+fun test() {
+    print "hola";
+}
+
+class TestClass {
+    testmethod() {
+        print "hola method";
+    }
+}
+
+trait TestTrait {
+    echo(a);
+}
+
+var variable = 1;

@@ -1,0 +1,31 @@
+import module;
+
+module::test();
+
+trait MyTrait {
+    mytraitmethod();
+}
+
+class Impl < module::TestClass {}
+
+trait MyTrait for module::TestClass {
+    mytraitmethod() {
+        print "my trait method";
+    }
+}
+
+var c = module::TestClass();
+c.testmethod();
+c.mytraitmethod();
+
+trait module::TestTrait for Impl {
+  echo(a) {
+      print a;
+  }
+}
+
+var i = Impl();
+i.echo("pepe");
+i.testmethod();
+
+print module::variable;
