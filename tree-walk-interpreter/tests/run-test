@@ -10,7 +10,7 @@ FOLDER=$(mktemp -d)
 trap "rm -fr $FOLDER; exit" EXIT
 
 echo "Running test $TEST"
-cat "$TEST" | ../target/debug/tree-walk-interpreter -p "$(pwd)/tests/imports" 1>"$FOLDER/out" 2>"$FOLDER/err"
+cat "$TEST" | ../target/debug/tree-walk-interpreter -p "$(pwd)/tests" -p "$(pwd)/tests/imports" 1>"$FOLDER/out" 2>"$FOLDER/err"
 
 diff "$FOLDER/out" "$TEST.out"
 diff "$FOLDER/err" "$TEST.err"

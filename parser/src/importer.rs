@@ -24,13 +24,14 @@ pub trait WithImports {
 }
 
 pub struct Importer<'a, T: WithImports> {
+    blacklists: Vec<String>,
     paths: &'a [String],
     with_imports: Rc<RefCell<T>>,
 }
 
 impl<'a, T: WithImports> Importer<'a, T> {
     pub fn new(paths: &'a [String], with_imports: Rc<RefCell<T>>) -> Importer<'a, T> {
-        Importer { paths, with_imports }
+        Importer { blacklists: vec![], paths, with_imports }
     }
     pub fn open_import(&self, name: &str, location: &SourceCodeLocation) -> Result<String, ProgramError> {
         for path in self.paths {
@@ -47,6 +48,12 @@ impl<'a, T: WithImports> Importer<'a, T> {
         })
     }
     pub fn resolve_import(&self, name: &str, location: &SourceCodeLocation) -> Result<Vec<Statement>, Vec<ProgramError>> {
+        if self.blacklists.contains(&name.to_owned()) {
+            return Err(vec![ProgramError {
+                message: format!("Circular import of {}", name),
+                location: location.clone(),
+            }]);
+        }
         let content = self.open_import(name, location)
             .map_err(|e| vec![e])?;
         let mut lexer = Lexer::new(content, name.to_owned());
@@ -69,10 +76,13 @@ impl<'a, 'b, T: WithImports + WithScopedVariables> Pass<'a> for Importer<'b, T> 
                             locals: HashMap::default(),
                         }));
                         let mut resolver = Resolver::new(variables.clone());
-                        let result = resolver.run(&ss)
+                        self.blacklists.push(name.clone());
+                        let result = self.run(&ss)
+                            .and_then(|_| resolver.run(&ss))
                             .and_then(|_| {
                                 self.with_imports.borrow_mut().add_import(name, ss, &variables.borrow().locals)
                             });
+                        self.blacklists.pop();
                         if let Err(new_errors) = result {
                             errors.extend(new_errors);
                         }
