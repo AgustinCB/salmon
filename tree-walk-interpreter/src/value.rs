@@ -2,7 +2,7 @@ use crate::class::{LoxClass, LoxObject};
 use crate::function::LoxFunction;
 use parser::types::{DataKeyword, FunctionHeader, Literal, ProgramError, SourceCodeLocation};
 use std::cell::RefCell;
-use std::convert::TryInto;
+use std::convert::{TryInto, TryFrom};
 use std::fmt::{Display, Error, Formatter};
 use std::ops::{Neg, Not};
 use std::rc::Rc;
@@ -22,7 +22,10 @@ pub enum Value {
     Boolean {
         value: bool,
     },
-    Number {
+    Integer {
+        value: i64,
+    },
+    Float {
         value: f32,
     },
     String {
@@ -48,7 +51,8 @@ pub enum Value {
 impl Value {
     pub fn is_number(&self) -> bool {
         match self {
-            Value::Number { .. } => true,
+            Value::Integer { .. } => true,
+            Value::Float { .. } => true,
             _ => false,
         }
     }
@@ -72,7 +76,8 @@ impl Value {
             Value::Nil => false,
             Value::Uninitialized => false,
             Value::Boolean { value: false } => false,
-            Value::Number { value } if *value == 0f32 => false,
+            Value::Float { value } if *value == 0f32 => false,
+            Value::Integer { value } if *value == 0 => false,
             _ => true,
         }
     }
@@ -83,7 +88,8 @@ impl Neg for Value {
 
     fn neg(self) -> Value {
         match self {
-            Value::Number { value } => Value::Number { value: -value },
+            Value::Integer { value } => Value::Integer { value: -value },
+            Value::Float { value } => Value::Float { value: -value },
             _ => panic!("Only numbers can change sign"),
         }
     }
@@ -104,6 +110,8 @@ impl Not for Value {
 
 pub enum ValueError {
     ExpectingDouble,
+    ExpectingInteger,
+    ExpectingNumber,
     ExpectingString,
 }
 
@@ -120,16 +128,30 @@ impl ToString for ValueError {
     fn to_string(&self) -> String {
         match self {
             ValueError::ExpectingDouble => "Type error! Expecting a double!".to_owned(),
+            ValueError::ExpectingInteger => "Type error! Expecting an integer!".to_owned(),
+            ValueError::ExpectingNumber => "Type error! Expecting a number!".to_owned(),
             ValueError::ExpectingString => "Type error! Expecting a string!".to_owned(),
         }
     }
 }
 
-impl TryInto<f32> for Value {
+impl TryFrom<Value> for i64 {
     type Error = ValueError;
-    fn try_into(self) -> Result<f32, Self::Error> {
-        match self {
-            Value::Number { value } => Ok(value),
+    fn try_from(value: Value) -> Result<i64, Self::Error> {
+        match value {
+            Value::Integer { value } => Ok(value),
+            Value::Float { value } => Ok(value as _),
+            _ => Err(ValueError::ExpectingDouble),
+        }
+    }
+}
+
+impl TryFrom<Value> for f32 {
+    type Error = ValueError;
+    fn try_from(value: Value) -> Result<f32, Self::Error> {
+        match value {
+            Value::Float { value } => Ok(value),
+            Value::Integer { value } => Ok(value as _),
             _ => Err(ValueError::ExpectingDouble),
         }
     }
@@ -148,7 +170,8 @@ impl TryInto<String> for Value {
 impl Into<Value> for &Literal {
     fn into(self) -> Value {
         match self {
-            Literal::Number(value) => Value::Number { value: *value },
+            Literal::Float(value) => Value::Float { value: *value },
+            Literal::Integer(value) => Value::Integer { value: *value as _ },
             Literal::QuotedString(value) => Value::String {
                 value: value.clone(),
             },
@@ -162,7 +185,8 @@ impl Into<Value> for &Literal {
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
-            Value::Number { value } => f.write_str(value.to_string().as_str()),
+            Value::Float { value } => f.write_str(value.to_string().as_str()),
+            Value::Integer { value } => f.write_str(value.to_string().as_str()),
             Value::String { value } => f.write_str(value.as_str()),
             Value::Boolean { value } => f.write_str(value.to_string().as_str()),
             Value::Uninitialized => f.write_str("Uninitialized"),

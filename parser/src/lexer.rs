@@ -31,6 +31,10 @@ impl Lexer {
                 ('}', _) => Some(self.create_token(TokenType::RightBrace, "}")),
                 ('[', _) => Some(self.create_token(TokenType::LeftSquareBrace, "[")),
                 (']', _) => Some(self.create_token(TokenType::RightSquareBrace, "]")),
+                (':', Some(':')) => {
+                    self.current += 1;
+                    Some(self.create_token(TokenType::DoubleColon, "::"))
+                },
                 (':', _) => Some(self.create_token(TokenType::Colon, ":")),
                 (',', _) => Some(self.create_token(TokenType::Comma, ",")),
                 ('.', _) => Some(self.create_token(TokenType::Dot, ".")),
@@ -88,19 +92,37 @@ impl Lexer {
                         d,
                         self.take_while(|s| s.is_digit(10) || s == '.' || s.is_alphabetic()),
                     );
-                    match f32::from_str(string_content.as_str()) {
-                        Ok(n) => Some(self.create_token(
-                            TokenType::TokenLiteral {
-                                value: Literal::Number(n),
-                            },
-                            &string_content,
-                        )),
-                        Err(_) => {
-                            errors.push(self.create_error(&format!(
-                                "Couldn't parse {} as number",
-                                string_content
-                            )));
-                            None
+                    if string_content.contains('.') {
+                        match f32::from_str(string_content.as_str()) {
+                            Ok(n) => Some(self.create_token(
+                                TokenType::TokenLiteral {
+                                    value: Literal::Float(n),
+                                },
+                                &string_content,
+                            )),
+                            Err(_) => {
+                                errors.push(self.create_error(&format!(
+                                    "Couldn't parse {} as floating point number",
+                                    string_content
+                                )));
+                                None
+                            }
+                        }
+                    } else {
+                        match i64::from_str(string_content.as_str()) {
+                            Ok(n) => Some(self.create_token(
+                                TokenType::TokenLiteral {
+                                    value: Literal::Integer(n),
+                                },
+                                &string_content,
+                            )),
+                            Err(_) => {
+                                errors.push(self.create_error(&format!(
+                                    "Couldn't parse {} as integer",
+                                    string_content
+                                )));
+                                None
+                            }
                         }
                     }
                 }
@@ -223,7 +245,7 @@ mod tests {
 
     #[test]
     fn test_lexer_with_no_error() {
-        let s = "(){}:,.-+;/!*!=;=;==>>=<<=;and;class;else;fun;for;break;if;or;print?return;;var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;getter;trait[];import";
+        let s = "(){}:,.-+;/!*!=;=;==>>=<<=;and;class;else;fun;for;break;if;or;print?return;;var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;getter;trait[];import;::;123";
         let mut lexer = Lexer::new(s.to_owned(), "file".to_owned());
         let expected = Ok(vec![
             Token {
@@ -632,7 +654,7 @@ mod tests {
             },
             Token {
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(123.123),
+                    value: Literal::Float(123.123),
                 },
                 lexeme: "123.123".to_owned(),
                 location: SourceCodeLocation {
@@ -768,6 +790,40 @@ mod tests {
                     line: 5,
                 },
             },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::DoubleColon,
+                lexeme: "::".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::TokenLiteral {
+                    value: Literal::Integer(123),
+                },
+                lexeme: "123".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
         ]);
         assert_eq!(lexer.parse(), expected);
     }
@@ -809,7 +865,7 @@ mod tests {
                 file: "file".to_owned(),
                 line: 0,
             },
-            message: "Couldn\'t parse 123a as number".to_owned(),
+            message: "Couldn\'t parse 123a as integer".to_owned(),
         }]);
         assert_eq!(lexer.parse(), expected);
     }
@@ -824,7 +880,7 @@ mod tests {
                     file: "file".to_owned(),
                     line: 0,
                 },
-                message: "Couldn\'t parse 123a as number".to_owned(),
+                message: "Couldn\'t parse 123a as integer".to_owned(),
             },
             ProgramError {
                 location: SourceCodeLocation {

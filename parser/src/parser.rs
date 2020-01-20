@@ -1078,9 +1078,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
     }
 
     fn parse_variable_or_module_access(&self, name: String, location: &SourceCodeLocation) -> Result<Expression, ProgramError> {
-        if self.peek(TokenType::Colon) {
-            self.consume(TokenType::Colon, "Expected `::` on module access", location)?;
-            self.consume(TokenType::Colon, "Expected `::` on module access", location)?;
+        if self.peek(TokenType::DoubleColon) {
+            self.consume(TokenType::DoubleColon, "Expected `::` on module access", location)?;
             let field = Box::new(self.parse_call()?);
             Ok(self.expression_factory.borrow_mut().new_expression(
                 ExpressionType::ModuleLiteral {
@@ -1357,7 +1356,7 @@ mod test {
         let input = vec![Token {
             location: location.clone(),
             token_type: TokenType::TokenLiteral {
-                value: Literal::Number(1.0),
+                value: Literal::Float(1.0),
             },
             lexeme: "1.0".to_string(),
         }];
@@ -1367,7 +1366,7 @@ mod test {
             result,
             create_expression(
                 ExpressionType::ExpressionLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 location,
             )
@@ -1853,7 +1852,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -1867,7 +1866,7 @@ mod test {
                     identifier: "identifier".to_string(),
                     expression: Box::new(create_expression_with_id(
                         ExpressionLiteral {
-                            value: Literal::Number(1.0),
+                            value: Literal::Float(1.0),
                         },
                         location.clone(),
                         1,
@@ -1900,7 +1899,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -1912,7 +1911,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -1930,7 +1929,7 @@ mod test {
                 statement_type: StatementType::If {
                     condition: create_expression(
                         ExpressionType::ExpressionLiteral {
-                            value: Literal::Number(1.0),
+                            value: Literal::Float(1.0),
                         },
                         location.clone(),
                     ),
@@ -1939,7 +1938,7 @@ mod test {
                         statement_type: StatementType::Expression {
                             expression: create_expression_with_id(
                                 ExpressionType::ExpressionLiteral {
-                                    value: Literal::Number(1.0),
+                                    value: Literal::Float(1.0),
                                 },
                                 location.clone(),
                                 1,
@@ -1974,7 +1973,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -1986,7 +1985,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -2003,7 +2002,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -2021,20 +2020,20 @@ mod test {
                 statement_type: StatementType::If {
                     condition: create_expression(
                         ExpressionType::ExpressionLiteral {
-                            value: Literal::Number(1.0),
+                            value: Literal::Float(1.0),
                         },
                         location.clone(),
                     ),
                     then: Box::new(create_statement_expression(
                         ExpressionType::ExpressionLiteral {
-                            value: Literal::Number(1.0)
+                            value: Literal::Float(1.0)
                         },
                         location.clone(),
                         1
                     )),
                     otherwise: Some(Box::new(create_statement_expression(
                         ExpressionType::ExpressionLiteral {
-                            value: Literal::Number(1.0)
+                            value: Literal::Float(1.0)
                         },
                         location.clone(),
                         2
@@ -2113,7 +2112,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_owned(),
             },
@@ -2132,7 +2131,7 @@ mod test {
                     name: "identifier".to_owned(),
                     expression: Some(create_expression(
                         ExpressionType::ExpressionLiteral {
-                            value: Literal::Number(1.0),
+                            value: Literal::Float(1.0),
                         },
                         location.clone(),
                     )),
@@ -2170,7 +2169,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_owned(),
             },
@@ -2208,7 +2207,7 @@ mod test {
                             statement_type: StatementType::Expression {
                                 expression: create_expression_with_id(
                                     ExpressionType::ExpressionLiteral {
-                                        value: Literal::Number(1.0),
+                                        value: Literal::Float(1.0),
                                     },
                                     location.clone(),
                                     1,
@@ -2279,7 +2278,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_owned(),
             },
@@ -2319,7 +2318,7 @@ mod test {
                             statement_type: StatementType::Expression {
                                 expression: create_expression_with_id(
                                     ExpressionType::ExpressionLiteral {
-                                        value: Literal::Number(1.0),
+                                        value: Literal::Float(1.0),
                                     },
                                     location.clone(),
                                     1,
@@ -2383,7 +2382,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_owned(),
             },
@@ -2431,7 +2430,7 @@ mod test {
                                     statement_type: StatementType::Expression {
                                         expression: create_expression_with_id(
                                             ExpressionType::ExpressionLiteral {
-                                                value: Literal::Number(1.0),
+                                                value: Literal::Float(1.0),
                                             },
                                             location.clone(),
                                             2,
@@ -2526,7 +2525,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_owned(),
             },
@@ -2564,7 +2563,7 @@ mod test {
                         statement_type: StatementType::Expression {
                             expression: create_expression_with_id(
                                 ExpressionType::ExpressionLiteral {
-                                    value: Literal::Number(1.0),
+                                    value: Literal::Float(1.0),
                                 },
                                 location.clone(),
                                 3,
@@ -2633,7 +2632,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -2645,7 +2644,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -2659,13 +2658,13 @@ mod test {
                     operator: token_type,
                     left: Box::new(create_expression(
                         ExpressionType::ExpressionLiteral {
-                            value: Literal::Number(1.0),
+                            value: Literal::Float(1.0),
                         },
                         location.clone(),
                     )),
                     right: Box::new(create_expression_with_id(
                         ExpressionType::ExpressionLiteral {
-                            value: Literal::Number(1.0),
+                            value: Literal::Float(1.0),
                         },
                         location.clone(),
                         1,
@@ -2692,7 +2691,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::Number(1.0),
+                    value: Literal::Float(1.0),
                 },
                 lexeme: "1.0".to_string(),
             },
@@ -2706,7 +2705,7 @@ mod test {
                     operator: token_type,
                     operand: Box::new(create_expression(
                         ExpressionType::ExpressionLiteral {
-                            value: Literal::Number(1.0),
+                            value: Literal::Float(1.0),
                         },
                         location.clone(),
                     )),

@@ -9,7 +9,7 @@ use parser::types::{
 };
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::convert::TryInto;
+use std::convert::{TryInto, TryFrom};
 use std::iter::FromIterator;
 use std::ops::{Add, Div, Mul, Sub};
 use std::rc::Rc;
@@ -25,33 +25,13 @@ fn array_element_expression_set(
     locals: &HashMap<usize, usize>,
     imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
-    let (ns, array_value) = array.evaluate(state, locals, imports)?;
-    if let Value::Array { elements, capacity } = array_value {
-        let (ns, index_value) = index.evaluate(ns, locals, imports)?;
-        if let Value::Number { value: index_value } = index_value {
-            if index_value - index_value as usize as f32 == 0f32 {
-                if (index_value as usize) < capacity {
-                    let (ns, value) = value.evaluate(ns, locals, imports)?;
-                    elements.borrow_mut()[index_value as usize] = Box::new(value.clone());
-                    Ok((ns, value))
-                } else {
-                    Err(index.create_program_error(
-                        format!(
-                            "You can't access element {} in an array of {} elements",
-                            index_value, capacity
-                        )
-                        .as_str(),
-                    ))
-                }
-            } else {
-                Err(index.create_program_error("You can only index with integers"))
-            }
-        } else {
-            Err(index.create_program_error("You can only index with numbers"))
+    array_element_operation(
+        array, index, state, locals, imports, |ns, elements, index_value| {
+            let (ns, value) = value.evaluate(ns, locals, imports)?;
+            elements.borrow_mut()[index_value] = Box::new(value.clone());
+            Ok((ns, value))
         }
-    } else {
-        Err(array.create_program_error("You can only index arrays"))
-    }
+    )
 }
 
 fn array_element_expression(
@@ -61,27 +41,37 @@ fn array_element_expression(
     locals: &HashMap<usize, usize>,
     imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
+    array_element_operation(
+        array, index, state, locals, imports, |ns, elements, index_value| {
+            Ok((ns, *elements.borrow()[index_value].clone()))
+        }
+    )
+}
+
+fn array_element_operation<I: Fn(State, Rc<RefCell<Vec<Box<Value>>>>, usize) -> EvaluationResult>(
+    array: &Expression,
+    index: &Expression,
+    state: State,
+    locals: &HashMap<usize, usize>,
+    imports: &HashMap<String, LoxModule>,
+    op: I,
+) -> EvaluationResult {
     let (ns, array_value) = array.evaluate(state, locals, imports)?;
     if let Value::Array { elements, capacity } = array_value {
         let (ns, index_value) = index.evaluate(ns, locals, imports)?;
-        if let Value::Number { value: index_value } = index_value {
-            if index_value - index_value as usize as f32 == 0f32 {
-                if (index_value as usize) < capacity {
-                    Ok((ns, *elements.borrow()[index_value as usize].clone()))
-                } else {
-                    Err(index.create_program_error(
-                        format!(
-                            "You can't access element {} in an array of {} elements",
-                            index_value, capacity
-                        )
-                        .as_str(),
-                    ))
-                }
-            } else {
-                Err(index.create_program_error("You can only index with integers"))
-            }
+        let index_value: i64 = i64::try_from(index_value).map_err(|e: ValueError| index.create_program_error(
+            e.to_string().as_str(),
+        ))?;
+        if (index_value as usize) < capacity {
+            op(ns, elements, index_value as usize)
         } else {
-            Err(index.create_program_error("You can only index with numbers"))
+            Err(index.create_program_error(
+                format!(
+                    "You can't access element {} in an array of {} elements",
+                    index_value, capacity
+                )
+                    .as_str(),
+            ))
         }
     } else {
         Err(array.create_program_error("You can only index arrays"))
@@ -99,12 +89,15 @@ fn div_expressions(
     let (s, left_value) = left.evaluate(state, locals, imports)?;
     let (final_state, right_value) = right.evaluate(s, locals, imports)?;
     match right_value {
-        Value::Number { value } if value == 0f32 => {
+        Value::Float { value } if value == 0f32 => {
+            Err(right.create_program_error("Division by zero!"))
+        }
+        Value::Integer { value } if value == 0 => {
             Err(right.create_program_error("Division by zero!"))
         }
         _ => Ok(()),
     }?;
-    math_operation(left_value, right_value, f32::div)
+    math_operation(left_value, right_value, i64::div, f32::div)
         .map(|v| (final_state, v))
         .map_err(|e| e.into_program_error(&location))
 }
@@ -120,7 +113,7 @@ fn add_expressions(
     let (s, left_value) = left.evaluate(state, locals, imports)?;
     if left_value.is_number() {
         let (final_state, right_value) = right.evaluate(s, locals, imports)?;
-        math_operation(left_value, right_value, f32::add)
+        math_operation(left_value, right_value, i64::add, f32::add)
             .map(|v| (final_state, v))
             .map_err(|e| e.into_program_error(location))
     } else {
@@ -140,16 +133,33 @@ fn add_expressions(
     }
 }
 
-fn operation<R>(l: Value, r: Value, op: fn(f32, f32) -> R) -> Result<R, ValueError> {
+fn operation<R, T: TryFrom<Value, Error=ValueError>>(l: Value, r: Value, op: fn(T, T) -> R) -> Result<R, ValueError> {
     let l_number = l.try_into()?;
     let r_number = r.try_into()?;
     Ok(op(l_number, r_number))
 }
 
-fn math_operation(l: Value, r: Value, op: fn(f32, f32) -> f32) -> Result<Value, ValueError> {
-    Ok(Value::Number {
+fn f32_math_operation(l: Value, r: Value, op: fn(f32, f32) -> f32) -> Result<Value, ValueError> {
+    Ok(Value::Float {
         value: operation(l, r, op)?,
     })
+}
+
+fn i64_math_operation(l: Value, r: Value, op: fn(i64, i64) -> i64) -> Result<Value, ValueError> {
+    Ok(Value::Integer {
+        value: operation(l, r, op)?,
+    })
+}
+
+fn math_operation(l: Value, r: Value, i64_op: fn(i64, i64) -> i64, f32_op: fn(f32, f32) -> f32) -> Result<Value, ValueError> {
+    match (&l, &r) {
+        (Value::Float { .. }, Value::Float { .. }) => f32_math_operation(l, r, f32_op),
+        (Value::Float { .. }, Value::Integer { value }) => f32_math_operation(l, Value::Float { value: *value as _ }, f32_op),
+        (Value::Integer { value }, Value::Float { .. }) => f32_math_operation(Value::Float { value: *value as _ }, r, f32_op),
+        (Value::Integer { .. }, Value::Integer { .. }) => i64_math_operation(l, r, i64_op),
+        _ => Err(ValueError::ExpectingNumber),
+
+    }
 }
 
 fn comparison_operation(l: Value, r: Value, op: fn(f32, f32) -> bool) -> Result<Value, ValueError> {
@@ -163,13 +173,14 @@ fn value_math_operation(
     left: &Expression,
     right: &Expression,
     location: &SourceCodeLocation,
-    op: fn(f32, f32) -> f32,
+    i64_op: fn(i64, i64) -> i64,
+    f32_op: fn(f32, f32) -> f32,
     locals: &HashMap<usize, usize>,
     imports: &HashMap<String, LoxModule>,
 ) -> EvaluationResult {
     let (s, left_value) = left.evaluate(state, locals, imports)?;
     let (final_state, right_value) = right.evaluate(s, locals, imports)?;
-    math_operation(left_value, right_value, op)
+    math_operation(left_value, right_value, i64_op, f32_op)
         .map(|v| (final_state, v))
         .map_err(|e| e.into_program_error(location))
 }
@@ -534,7 +545,7 @@ impl Evaluable for Expression {
             ExpressionType::RepeatedElementArray { element, length } => {
                 let (ns, element) = element.evaluate(state, locals, imports)?;
                 let (ns, length) = length.evaluate(ns, locals, imports)?;
-                if let Value::Number { value: length } = length {
+                if let Value::Integer { value: length } = length {
                     let elements = Rc::new(RefCell::new(vec![Box::new(element); length as _]));
                     Ok((
                         ns,
@@ -544,7 +555,7 @@ impl Evaluable for Expression {
                         },
                     ))
                 } else {
-                    Err(self.create_program_error("Array length should be a number"))
+                    Err(self.create_program_error("Array length should be an integer"))
                 }
             }
             ExpressionType::Array { elements } => {
@@ -617,7 +628,7 @@ impl Evaluable for Expression {
                 left,
                 right,
                 operator: TokenType::Minus,
-            } => value_math_operation(state, left, right, &self.location, f32::sub, locals, imports),
+            } => value_math_operation(state, left, right, &self.location, i64::sub, f32::sub, locals, imports),
             ExpressionType::Binary {
                 left,
                 right,
@@ -627,7 +638,7 @@ impl Evaluable for Expression {
                 left,
                 right,
                 operator: TokenType::Star,
-            } => value_math_operation(state, left, right, &self.location, f32::mul, locals, imports),
+            } => value_math_operation(state, left, right, &self.location, i64::mul, f32::mul, locals, imports),
             ExpressionType::Binary {
                 left,
                 right,
@@ -1039,9 +1050,9 @@ mod test_statement {
             location,
         };
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Number { value: 2.0 });
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Number { value: 1.0 }));
+        state.insert("identifier".to_owned(), Value::Float { value: 2.0 });
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
+        assert_eq!(s.find("identifier"), Some(Value::Float { value: 1.0 }));
     }
 
     #[test]
@@ -1069,9 +1080,9 @@ mod test_statement {
             location,
         };
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Number { value: 2.0 });
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Number { value: 0.0 }));
+        state.insert("identifier".to_owned(), Value::Float { value: 2.0 });
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
+        assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
     }
 
     #[test]
@@ -1084,9 +1095,9 @@ mod test_statement {
         locals.insert(0, 0);
         let statement = create_variable_assignment_statement("identifier", 0.0, &location);
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Number { value: 2.0 });
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Number { value: 0.0 }));
+        state.insert("identifier".to_owned(), Value::Float { value: 2.0 });
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
+        assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
     }
 
     #[test]
@@ -1120,13 +1131,13 @@ mod test_statement {
             location,
         };
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Number { value: 2.0 });
-        state.insert("identifier1".to_owned(), Value::Number { value: 2.0 });
-        state.insert("identifier2".to_owned(), Value::Number { value: 0.0 });
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Number { value: 0.0 }));
-        assert_eq!(s.find("identifier1"), Some(Value::Number { value: 1.0 }));
-        assert_eq!(s.find("identifier2"), Some(Value::Number { value: 2.0 }));
+        state.insert("identifier".to_owned(), Value::Float { value: 2.0 });
+        state.insert("identifier1".to_owned(), Value::Float { value: 2.0 });
+        state.insert("identifier2".to_owned(), Value::Float { value: 0.0 });
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
+        assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
+        assert_eq!(s.find("identifier1"), Some(Value::Float { value: 1.0 }));
+        assert_eq!(s.find("identifier2"), Some(Value::Float { value: 2.0 }));
     }
 
     #[test]
@@ -1144,8 +1155,8 @@ mod test_statement {
             location,
         };
         let state = State::default();
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Number { value: 1.0 }));
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
+        assert_eq!(s.find("identifier"), Some(Value::Float { value: 1.0 }));
     }
 
     #[test]
@@ -1167,7 +1178,7 @@ mod test_statement {
             location: location.clone(),
         };
         let state = State::default();
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
         let value = s.find("function").unwrap();
         match value {
             Value::Function(LoxFunction {
@@ -1205,8 +1216,8 @@ mod test_statement {
         let locals = HashMap::default();
         let mut state = State::default();
         state.in_function = true;
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
-        assert_eq!(s.return_value, Some(Box::new(Value::Number { value: 1.0 })));
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
+        assert_eq!(s.return_value, Some(Box::new(Value::Float { value: 1.0 })));
     }
 
     #[test]
@@ -1223,7 +1234,7 @@ mod test_statement {
             location: location.clone(),
         };
         let state = State::default();
-        let r = statement.evaluate(state, &locals);
+        let r = statement.evaluate(state, &locals, &HashMap::default());
         assert_eq!(
             r,
             Err(ProgramError {
@@ -1246,7 +1257,7 @@ mod test_statement {
         let locals = HashMap::default();
         let mut state = State::default();
         state.loop_count = 1;
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
         assert!(s.broke_loop);
         assert_eq!(s.loop_count, 1);
     }
@@ -1263,7 +1274,7 @@ mod test_statement {
         };
         let locals = HashMap::default();
         let state = State::default();
-        let r = statement.evaluate(state, &locals);
+        let r = statement.evaluate(state, &locals, &HashMap::default());
         assert_eq!(
             r,
             Err(ProgramError {
@@ -1315,9 +1326,9 @@ mod test_statement {
             location,
         };
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Number { value: 0.0 });
-        let (s, _) = statement.evaluate(state, &locals).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Number { value: 10.0 }));
+        state.insert("identifier".to_owned(), Value::Float { value: 0.0 });
+        let (s, _) = statement.evaluate(state, &locals, &HashMap::default()).unwrap();
+        assert_eq!(s.find("identifier"), Some(Value::Float { value: 10.0 }));
     }
 
     fn create_variable_assignment_statement(
@@ -1342,7 +1353,7 @@ mod test_statement {
     fn create_expression_number(value: f32, location: &SourceCodeLocation) -> Expression {
         create_expression(
             ExpressionType::ExpressionLiteral {
-                value: Literal::Number(value),
+                value: Literal::Float(value),
             },
             location.clone(),
         )
@@ -1379,10 +1390,10 @@ mod test_expression {
         let locals = HashMap::default();
         let state = State::default();
         let (final_state, got) = get_number(1.0, &location)
-            .evaluate(state.clone(), &locals)
+            .evaluate(state.clone(), &locals, &HashMap::default())
             .unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 1.0 });
+        assert_eq!(got, Value::Float { value: 1.0 });
     }
 
     #[test]
@@ -1394,10 +1405,10 @@ mod test_expression {
         let locals = HashMap::default();
         let expression = get_variable("variable", &location);
         let mut state = State::default();
-        state.insert("variable".to_owned(), Value::Number { value: 1.0 });
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        state.insert("variable".to_owned(), Value::Float { value: 1.0 });
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 1.0 });
+        assert_eq!(got, Value::Float { value: 1.0 });
     }
 
     #[test]
@@ -1414,9 +1425,9 @@ mod test_expression {
         );
         let locals = HashMap::default();
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 1.0 });
+        assert_eq!(got, Value::Float { value: 1.0 });
     }
 
     #[test]
@@ -1434,9 +1445,9 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: -1.0 });
+        assert_eq!(got, Value::Float { value: -1.0 });
     }
 
     #[test]
@@ -1454,7 +1465,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: false });
     }
@@ -1475,9 +1486,9 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 2.0 });
+        assert_eq!(got, Value::Float { value: 2.0 });
     }
 
     #[test]
@@ -1496,7 +1507,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(
             got,
@@ -1522,9 +1533,9 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 0.0 });
+        assert_eq!(got, Value::Float { value: 0.0 });
     }
 
     #[test]
@@ -1543,9 +1554,9 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 2.0 });
+        assert_eq!(got, Value::Float { value: 2.0 });
     }
 
     #[test]
@@ -1564,9 +1575,9 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 1.0 });
+        assert_eq!(got, Value::Float { value: 1.0 });
     }
 
     #[test]
@@ -1585,7 +1596,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1606,7 +1617,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1627,7 +1638,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1648,7 +1659,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1669,7 +1680,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1690,7 +1701,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1711,7 +1722,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1732,7 +1743,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1753,7 +1764,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1774,7 +1785,7 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Boolean { value: true });
     }
@@ -1795,9 +1806,9 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 1.0 });
+        assert_eq!(got, Value::Float { value: 1.0 });
     }
 
     #[test]
@@ -1816,9 +1827,9 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 2.0 });
+        assert_eq!(got, Value::Float { value: 2.0 });
     }
 
     #[test]
@@ -1837,11 +1848,11 @@ mod test_expression {
             location,
         );
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Number { value: 0.0 });
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
-        state.insert("identifier".to_owned(), Value::Number { value: 1.0 });
+        state.insert("identifier".to_owned(), Value::Float { value: 0.0 });
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
+        state.insert("identifier".to_owned(), Value::Float { value: 1.0 });
         assert_eq!(state, final_state);
-        assert_eq!(got, Value::Number { value: 1.0 });
+        assert_eq!(got, Value::Float { value: 1.0 });
     }
 
     #[test]
@@ -1859,7 +1870,7 @@ mod test_expression {
             location.clone(),
         );
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Number { value: 0.0 });
+        state.insert("identifier".to_owned(), Value::Float { value: 0.0 });
         state.insert(
             "function".to_owned(),
             Value::Function(LoxFunction {
@@ -1875,7 +1886,7 @@ mod test_expression {
                 location,
             }),
         );
-        let (final_state, got) = expression.evaluate(state.clone(), &locals).unwrap();
+        let (final_state, got) = expression.evaluate(state.clone(), &locals, &HashMap::default()).unwrap();
         state.last().borrow_mut().remove("function");
         final_state.last().borrow_mut().remove("function");
         assert_eq!(state, final_state);
@@ -1903,7 +1914,7 @@ mod test_expression {
     fn get_number(n: f32, location: &SourceCodeLocation) -> Expression {
         create_expression(
             ExpressionType::ExpressionLiteral {
-                value: Literal::Number(n),
+                value: Literal::Float(n),
             },
             location.clone(),
         )

@@ -17,7 +17,8 @@ pub enum DataKeyword {
 pub enum Literal {
     QuotedString(String),
     Keyword(DataKeyword),
-    Number(f32),
+    Float(f32),
+    Integer(i64),
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -28,6 +29,7 @@ pub enum TokenType {
     RightBrace,
     LeftSquareBrace,
     RightSquareBrace,
+    DoubleColon,
     Colon,
     Comma,
     Dot,
