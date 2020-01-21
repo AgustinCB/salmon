@@ -591,14 +591,7 @@ impl Evaluable for Expression {
                         self.create_program_error(&format!("Variable `{}` not found!", identifier))
                     })?
                     .clone();
-                if value == Value::Uninitialized {
-                    Err(self.create_program_error(&format!(
-                        "Variable `{}` not initialized!",
-                        identifier
-                    )))
-                } else {
-                    Ok((state, value))
-                }
+                Ok((state, value))
             }
             ExpressionType::Grouping { expression } => expression.evaluate(state, locals, imports),
             ExpressionType::Unary {

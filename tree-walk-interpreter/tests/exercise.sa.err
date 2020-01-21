@@ -1,1 +1,1 @@
-There was an error! [file stdin line 3] Error: Variable `a` not found!
+There was an error! [file stdin line 3] Error: `a` used without being initialized.

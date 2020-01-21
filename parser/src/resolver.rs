@@ -68,22 +68,32 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
         Ok(())
     }
     fn define(&mut self, name: &str) {
-        if let Some(s) = self.scopes.last_mut() {
+        if let Some(s) = self.scopes
+            .iter_mut()
+            .rev()
+            .find(|s| s.contains_key(name)) {
             s.insert(name.to_owned(), true);
         }
     }
-    fn resolve_local(&mut self, expression: &Expression, name: &'a str) {
-        if let Some((i, _)) = self
+    fn resolve_local(&mut self, expression: &Expression, name: &'a str) -> Result<(), ProgramError> {
+        if let Some((i, scope)) = self
             .scopes
             .iter()
             .enumerate()
             .rev()
             .find(|(_, s)| s.contains_key(name))
         {
+            if !scope[name] {
+                return Err(ProgramError {
+                    message: format!("`{}` used without being initialized.", name),
+                    location: expression.location.clone(),
+                })
+            }
             let new_uses = self.uses[i][name] + 1;
             self.uses[i].insert(name, new_uses);
             self.interpreter.borrow_mut().resolve_variable(expression, i);
         }
+        Ok(())
     }
     fn resolve_functions(
         &mut self,
@@ -153,8 +163,8 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
                     .map_err(|e| vec![e])?;
                 if let Some(e) = expression {
                     self.resolve_expression(e)?;
+                    self.define(&name);
                 }
-                self.define(&name);
             }
             StatementType::ClassDeclaration {
                 name,
@@ -174,7 +184,8 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
                                 location: statement.location.clone(),
                             }]);
                         }
-                        self.resolve_local(e, identifier);
+                        self.resolve_local(e, identifier)
+                            .map_err(|e| vec![e])?;
                     } else {
                         self.resolve_expression(e)?;
                     }
@@ -264,7 +275,7 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
                 module, field,
             } => {
                 self.resolve_expression(field)?;
-                self.resolve_local(expression, module);
+                self.resolve_local(expression, module).map_err(|e| vec![e])?;
             }
             ExpressionType::Get { callee, .. } => {
                 self.resolve_expression(callee)?;
@@ -274,14 +285,15 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
                 self.resolve_expression(value)?;
             }
             ExpressionType::VariableLiteral { identifier } => {
-                self.resolve_local(expression, identifier);
+                self.resolve_local(expression, identifier).map_err(|e| vec![e])?;
             }
             ExpressionType::VariableAssignment {
                 identifier,
                 expression: expression_value,
             } => {
+                self.define(identifier);
                 self.resolve_expression(expression_value)?;
-                self.resolve_local(expression, identifier);
+                self.resolve_local(expression, identifier).map_err(|e| vec![e])?;
             }
             ExpressionType::Binary { left, right, .. } => {
                 self.resolve_expression(left)?;
