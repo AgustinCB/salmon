@@ -1,6 +1,6 @@
-# Smoked
+# Salmon
 
-Implementation Smoke, a language based on
+Implementation Salmon, a language based on
  Lox (see [Crafting interpreters](https://craftinginterpreters.com/)) using Rust.
 
 ## Grammar
