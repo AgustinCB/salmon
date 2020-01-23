@@ -6,6 +6,8 @@ use std::cell::RefCell;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 
+const INTERNAL_MATCH_VALUE_NAME: &str = "@match_value";
+
 struct MethodSet<T> {
     getters: Vec<T>,
     methods: Vec<T>,
@@ -78,6 +80,11 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 token_type: TokenType::If,
                 ..
             }) => self.parse_if_statement(&location),
+            Some(Token {
+                 location,
+                 token_type: TokenType::Match,
+                 ..
+            }) => self.parse_match_statement(&location),
             Some(Token {
                 location,
                 token_type: TokenType::Return,
@@ -417,6 +424,101 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             }
         }
         Ok(method_set)
+    }
+
+    fn parse_match_statement(&self, location: &SourceCodeLocation) -> Result<Statement, ProgramError> {
+        self.next();
+        let value = self.parse_expression()?;
+        self.consume(
+            TokenType::LeftBrace,
+            "Expected '{' before match branches",
+            location,
+        )?;
+        let mut branches = vec![];
+        while !self.peek(TokenType::Star) {
+            let next = self.next();
+            let next_location = next.clone().map_or(location.clone(), |n| n.location);
+            if let Some(TokenType::TokenLiteral { value }) = next.map(|t| t.token_type) {
+                self.consume(
+                    TokenType::Arrow,
+                    "Expecting `=>` after `*` on match!",
+                    &location,
+                )?;
+                branches.push((value, self.parse_block_statement(next_location)?));
+                self.consume(
+                    TokenType::Comma,
+                    "Expecting `,` at the end of branch on match!",
+                    &location,
+                )?;
+            } else {
+                return Err(ProgramError {
+                    message: "All branches should match using literals".to_owned(),
+                    location: next_location,
+                })
+            }
+        }
+        self.consume(
+            TokenType::Star,
+            "No `*` branch on match!",
+            &location,
+        )?;
+        self.consume(
+            TokenType::Arrow,
+            "Expecting `=>` after `*` on match!",
+            &location,
+        )?;
+        let match_all = self.parse_statement()?;
+        self.consume(
+            TokenType::Comma,
+            "Expecting `,` at the end of branch on match!",
+            &location,
+        )?;
+        self.consume(
+            TokenType::RightBrace,
+            "Expected '}' after match branches",
+            location,
+        )?;
+        let if_elses = branches.into_iter()
+            .fold(match_all, |acc, (value, s)| {
+                let left = Box::new(self.expression_factory.borrow_mut().new_expression(
+                    ExpressionType::ExpressionLiteral { value },
+                    s.location.clone(),
+                ));
+                let right = Box::new(self.expression_factory.borrow_mut().new_expression(
+                    ExpressionType::VariableLiteral {
+                        identifier: INTERNAL_MATCH_VALUE_NAME.to_owned()
+                    },
+                    s.location.clone(),
+                ));
+                Statement {
+                    location: s.location.clone(),
+                    statement_type: StatementType::If {
+                        condition: self.expression_factory.borrow_mut().new_expression(
+                            ExpressionType::Binary {
+                                operator: TokenType::EqualEqual, left, right,
+                            },
+                            s.location.clone(),
+                        ),
+                        then: Box::new(s),
+                        otherwise: Some(Box::new(acc)),
+                    }
+                }
+            });
+        Ok(Statement {
+            location: location.clone(),
+            statement_type: StatementType::Block {
+                body: vec![
+                    Box::new(Statement {
+                        location: location.clone(),
+                        statement_type: StatementType::VariableDeclaration {
+                            name: INTERNAL_MATCH_VALUE_NAME.to_owned(),
+                            expression: Some(value),
+                        }
+                    }),
+                    Box::new(if_elses),
+                ]
+            }
+        })
     }
 
     fn parse_if_statement(&self, location: &SourceCodeLocation) -> Result<Statement, ProgramError> {

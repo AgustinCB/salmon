@@ -1,0 +1,25 @@
+fun withmatch(v) {
+  match v {
+    1 => {
+      print "uno";
+    },
+    2 => {
+      print "dos";
+    },
+    nil => {
+      print "nulo";
+    },
+    true => {
+      print "verdadero";
+    },
+    * => {
+      print v;
+    },
+  }
+}
+
+withmatch(1);
+withmatch(2);
+withmatch(nil);
+withmatch(true);
+withmatch("hola");

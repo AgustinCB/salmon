@@ -58,6 +58,10 @@ impl Lexer {
                     self.current += 1;
                     Some(self.create_token(TokenType::EqualEqual, "=="))
                 }
+                ('=', Some('>')) => {
+                    self.current += 1;
+                    Some(self.create_token(TokenType::Arrow, "=>"))
+                }
                 ('=', _) => Some(self.create_token(TokenType::Equal, "=")),
                 ('>', Some('=')) => {
                     self.current += 1;
@@ -149,6 +153,7 @@ impl Lexer {
                         "getter" => Some(self.create_token(TokenType::Getter, "getter")),
                         "trait" => Some(self.create_token(TokenType::Trait, "trait")),
                         "import" => Some(self.create_token(TokenType::Import, "import")),
+                        "match" => Some(self.create_token(TokenType::Match, "match")),
                         "true" => Some(self.create_token(
                             TokenType::TokenLiteral {
                                 value: Literal::Keyword(DataKeyword::True),
@@ -245,7 +250,9 @@ mod tests {
 
     #[test]
     fn test_lexer_with_no_error() {
-        let s = "(){}:,.-+;/!*!=;=;==>>=<<=;and;class;else;fun;for;break;if;or;print?return;;var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;getter;trait[];import;::;123";
+        let s = "(){}:,.-+;/!*!=;=;==>>=<<=;and;class;else;fun;for;break;if;or;print?return;;".to_owned() +
+            "var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;" +
+            "getter;trait[];import;::;123;=>;match";
         let mut lexer = Lexer::new(s.to_owned(), "file".to_owned());
         let expected = Ok(vec![
             Token {
@@ -819,6 +826,38 @@ mod tests {
                     value: Literal::Integer(123),
                 },
                 lexeme: "123".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Arrow,
+                lexeme: "=>".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Match,
+                lexeme: "match".to_owned(),
                 location: SourceCodeLocation {
                     file: "file".to_owned(),
                     line: 5,

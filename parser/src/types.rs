@@ -65,6 +65,8 @@ pub enum TokenType {
     Getter,
     Trait,
     Import,
+    Arrow,
+    Match,
     Identifier { name: String },
     TokenLiteral { value: Literal },
 }

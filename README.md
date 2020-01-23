@@ -30,6 +30,7 @@ declWithBreak   → varDecl
 statement       → exprStmt
                 | forStmt
                 | ifStmt
+                | match
                 | printStmt
                 | whileStmt
                 | returnStmt
@@ -39,6 +40,7 @@ statement       → exprStmt
 stmtWithBreak   → exprStmt
                 | forStmt
                 | ifStmtWithBreak
+                | matchWithBreak
                 | printStmt
                 | whileStmt
                 | returnStmt
@@ -56,6 +58,15 @@ blockWithBreak  → "{" declWithBreak* "}" ;
 ifStmt          → "if" "(" expression ")" statement ( "else" statement )? ;
 ifStmtWithBreak → "if" "(" expression ")" statementWithBreak 
                         ( "else" statementWithBreak )? ;
+match           → "match" expression "{" 
+                     ( ( ( IDENTIFIER "@" ) ? type | primary | "*" ) "=>" block "," ) +
+                  "}" ;
+matchWithBreak  → "match" expression "{" 
+                     ( ( ( IDENTIFIER "@" ) ? type | primary | "*" ) "=>" blockWithBreak "," ) +
+                  "}" ;
+type            → "Nil" | "Uninitialized" | "Boolean" | "Integer" |
+                  "Float" | "String" | "Function" | "Class" | "Array" |
+                  "Module" | modIdentifier ;
 exprStmt        → expression ";" ;
 printStmt       → "print" expression ";" ;
 whileStmt       → "while" "(" expression ")" statementWithBreak ;
