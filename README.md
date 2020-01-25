@@ -64,9 +64,8 @@ match           → "match" expression "{"
 matchWithBreak  → "match" expression "{" 
                      ( ( ( IDENTIFIER "@" ) ? type | primary | "*" ) "=>" blockWithBreak "," ) +
                   "}" ;
-type            → "Nil" | "Uninitialized" | "Boolean" | "Integer" |
-                  "Float" | "String" | "Function" | "Class" | "Array" |
-                  "Module" | modIdentifier ;
+type            → "Nil" | "Boolean" | "Integer" | "Float" | "String"
+                | "Function" | "Class" | "Array" | "Module" | modIdentifier ;
 exprStmt        → expression ";" ;
 printStmt       → "print" expression ";" ;
 whileStmt       → "while" "(" expression ")" statementWithBreak ;
@@ -88,7 +87,8 @@ comparison      → addition ( ( ">" | ">=" | "<" | "<=" ) addition )* ;
 addition        → multiplication ( ( "-" | "+" ) multiplication )* ;
 multiplication  → unary ( ( "/" | "*" ) unary )* ;
 unary           → ( "!" | "-" ) unary
-                | call ;
+                | istype ;
+istype          → call ( "istype" type )? ;
 call            → arrayElement ( "(" arguments? ")" | "." IDENTIFIER )* ;
 arguments       → ternary ( "," ternary )* ;
 arrayElement    → primary ( "[" expression "]" )?

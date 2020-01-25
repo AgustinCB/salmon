@@ -1,7 +1,4 @@
-use crate::types::{
-    DataKeyword, Expression, ExpressionFactory, ExpressionType, FunctionHeader, Literal,
-    ProgramError, SourceCodeLocation, Statement, StatementType, Token, TokenType,
-};
+use crate::types::{DataKeyword, Expression, ExpressionFactory, ExpressionType, FunctionHeader, Literal, ProgramError, SourceCodeLocation, Statement, StatementType, Token, TokenType, Type};
 use std::cell::RefCell;
 use std::iter::Peekable;
 use std::vec::IntoIter;
@@ -1007,7 +1004,50 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 t.location,
             ))
         } else {
-            self.parse_call()
+            self.parse_istype()
+        }
+    }
+
+    fn parse_istype(&self) -> Result<Expression, ProgramError> {
+        let element = self.parse_call()?;
+        if self.peek(TokenType::IsType) {
+            let location = self.next().unwrap().location;
+            let checked_type = self.parse_checked_type(&location)?;
+            Ok(self.expression_factory.borrow_mut().new_expression(
+                ExpressionType::IsType {
+                    value: Box::new(element),
+                    checked_type,
+                },
+                location
+            ))
+        } else {
+            Ok(element)
+        }
+    }
+
+    fn parse_checked_type(&self, location: &SourceCodeLocation) -> Result<Type, ProgramError> {
+        match self.next() {
+            Some(Token { token_type: TokenType::UppercaseNil, .. }) => Ok(Type::Nil),
+            Some(Token { token_type: TokenType::Boolean, .. }) => Ok(Type::Boolean),
+            Some(Token { token_type: TokenType::Integer, .. }) => Ok(Type::Integer),
+            Some(Token { token_type: TokenType::Float, .. }) => Ok(Type::Float),
+            Some(Token { token_type: TokenType::String, .. }) => Ok(Type::String),
+            Some(Token { token_type: TokenType::Array, .. }) => Ok(Type::Array),
+            Some(Token { token_type: TokenType::Function, .. }) => Ok(Type::Function),
+            Some(Token { token_type: TokenType::UppercaseClass, .. }) => Ok(Type::Class),
+            Some(Token { token_type: TokenType::UppercaseTrait, .. }) => Ok(Type::Trait),
+            Some(Token { token_type: TokenType::Module, .. }) => Ok(Type::Module),
+            Some(Token {
+                token_type: TokenType::Identifier { name }, location, ..
+            }) => {
+                Ok(Type::UserDefined(Box::new(
+                    self.parse_variable_or_module_access(name, &location)?
+                )))
+            }
+            _ => Err(ProgramError {
+                message: "Expected type literal in istype right hand operand".to_owned(),
+                location: location.clone(),
+            })
         }
     }
 

@@ -3,10 +3,7 @@ use crate::function::LoxFunction;
 use crate::state::State;
 use crate::value::{Value, ValueError, LoxModule};
 use parser::resolver::WithScopedVariables;
-use parser::types::{
-    Expression, ExpressionType, FunctionHeader, ProgramError, SourceCodeLocation, Statement,
-    StatementType, TokenType,
-};
+use parser::types::{Expression, ExpressionType, FunctionHeader, ProgramError, SourceCodeLocation, Statement, StatementType, TokenType, Type};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::convert::{TryInto, TryFrom};
@@ -453,6 +450,82 @@ fn check_trait_methods(
     }
 }
 
+fn is_value_type(
+    value: &Value,
+    checked_type: &Type,
+    state: State,
+    location: &SourceCodeLocation,
+    imports: &HashMap<String, LoxModule>,
+    locals: &HashMap<usize, usize>,
+) -> EvaluationResult {
+    match (value, checked_type) {
+        (Value::Nil, Type::Nil) => Ok((state, Value::Boolean { value: true })),
+        (Value::Nil, _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Boolean { .. }, Type::Boolean) => Ok((state, Value::Boolean { value: true })),
+        (Value::Boolean { .. }, _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Integer { .. }, Type::Integer) => Ok((state, Value::Boolean { value: true })),
+        (Value::Integer { .. }, _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Float { .. }, Type::Float) => Ok((state, Value::Boolean { value: true })),
+        (Value::Float { .. }, _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Module { .. }, Type::Module) => Ok((state, Value::Boolean { value: true })),
+        (Value::Module { .. }, _) => Ok((state, Value::Boolean { value: false })),
+        (Value::String { .. }, Type::String) => Ok((state, Value::Boolean { value: true })),
+        (Value::String { .. }, _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Array { .. }, Type::Array) => Ok((state, Value::Boolean { value: true })),
+        (Value::Array { .. }, _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Function(_), Type::Function) => Ok((state, Value::Boolean { value: true })),
+        (Value::Function(_), _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Trait { .. }, Type::Trait) => Ok((state, Value::Boolean { value: true })),
+        (Value::Trait { .. }, _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Class(_), Type::Class) => Ok((state, Value::Boolean { value: true })),
+        (Value::Class(_), _) => Ok((state, Value::Boolean { value: false })),
+        (Value::Object(obj), Type::UserDefined(c)) => {
+            let (s, v) = c.evaluate(state, locals, imports)?;
+            match v {
+                Value::Class(lox_class) => {
+                    Ok((s, Value::Boolean { value: is_class(&lox_class, obj) }))
+                }
+                Value::Trait { name, .. } => {
+                    Ok((s, Value::Boolean { value: is_trait(&name, obj) }))
+                }
+                _ => Err(ProgramError {
+                    location: c.location.clone(),
+                    message: "Objects can only be either an implementation of a class or an object".to_owned(),
+                })
+            }
+        },
+        (Value::Object(_), _) => Ok((state, Value::Boolean { value: false })),
+        _ => Err(ProgramError {
+            location: location.clone(),
+            message: "Invalid value to check for type".to_owned(),
+        })
+    }
+}
+
+fn is_trait(trait_name: &str, obj: &LoxObject) -> bool {
+    if obj.traits.contains(trait_name) {
+        true
+    } else {
+        if let Some(superclass) = &obj.superclass {
+            is_trait(trait_name, superclass)
+        } else {
+            false
+        }
+    }
+}
+
+fn is_class(lox_class: &LoxClass, obj: &LoxObject) -> bool {
+    if lox_class.name == obj.class_name {
+        true
+    } else {
+        if let Some(superclass) = &obj.superclass {
+            is_class(lox_class, superclass)
+        } else {
+            false
+        }
+    }
+}
+
 pub struct Interpreter {
     content: Vec<Statement>,
     locals: HashMap<usize, usize>,
@@ -512,6 +585,12 @@ pub trait Evaluable {
 impl Evaluable for Expression {
     fn evaluate(&self, state: State, locals: &HashMap<usize, usize>, imports: &HashMap<String, LoxModule>) -> EvaluationResult {
         match &self.expression_type {
+            ExpressionType::IsType {
+                value, checked_type
+            } => {
+                let (s, value) = value.evaluate(state, locals, imports)?;
+                is_value_type(&value, checked_type, s, &self.location, imports, locals)
+            }
             ExpressionType::ModuleLiteral {
                 module,
                 field,
@@ -854,10 +933,18 @@ impl Evaluable for Statement {
                             static_methods: trait_static_methods,
                             getters: trait_getters,
                             setters: trait_setters,
-                            ..
+                            name,
                         },
                     ) = trait_name.evaluate(state, locals, imports)?
                     {
+                        if class.implements(&name) {
+                            return Err(ProgramError {
+                                message: format!("{} already implements {}", class.name, name),
+                                location: self.location.clone(),
+                            });
+                        } else {
+                            class.append_trait(name);
+                        }
                         let methods = &methods.iter().map(|s| s.as_ref()).collect::<Vec<&_>>();
                         let static_methods = &static_methods
                             .iter()

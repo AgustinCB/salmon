@@ -2,7 +2,7 @@ use crate::function::LoxFunction;
 use crate::value::{Value, LoxModule};
 use parser::types::{ProgramError, SourceCodeLocation, Statement, StatementType};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 fn function_declaration_to_lox_funxtion(
@@ -52,7 +52,8 @@ pub struct LoxClass {
     methods: Rc<RefCell<HashMap<String, LoxFunction>>>,
     getters: Rc<RefCell<HashMap<String, LoxFunction>>>,
     setters: Rc<RefCell<HashMap<String, LoxFunction>>>,
-    superclass: Option<Box<LoxClass>>,
+    traits: Rc<RefCell<HashSet<String>>>,
+    pub superclass: Option<Box<LoxClass>>,
     pub name: String,
     pub static_instance: LoxObject,
 }
@@ -109,7 +110,16 @@ impl LoxClass {
             setters,
             static_instance,
             superclass: superclass.map(Box::new),
+            traits: Rc::new(RefCell::new(HashSet::new())),
         }
+    }
+
+    pub fn append_trait(&self, trait_name: String) {
+        self.traits.borrow_mut().insert(trait_name);
+    }
+
+    pub fn implements(&self, trait_name: &str) -> bool {
+        self.traits.borrow().contains(trait_name)
     }
 
     pub fn append_methods(
@@ -154,8 +164,9 @@ pub struct LoxObject {
     properties: Rc<RefCell<HashMap<String, Value>>>,
     getters: HashMap<String, LoxFunction>,
     setters: HashMap<String, LoxFunction>,
-    superclass: Option<Box<LoxObject>>,
+    pub superclass: Option<Box<LoxObject>>,
     pub class_name: String,
+    pub traits: HashSet<String>,
 }
 
 impl LoxObject {
@@ -167,11 +178,12 @@ impl LoxObject {
             .map(LoxObject::new)
             .map(Box::new);
         let mut object = LoxObject {
-            class_name: class.name,
+            class_name: class.name.clone(),
             getters: HashMap::default(),
             properties: properties.clone(),
             setters: HashMap::default(),
             superclass: superclass.clone(),
+            traits: class.traits.borrow().clone(),
         };
         let mut variables = vec!["this"];
         let mut instances = vec![object.clone()];
@@ -226,6 +238,7 @@ impl LoxObject {
         LoxObject {
             getters: HashMap::new(),
             setters: HashMap::new(),
+            traits: HashSet::new(),
             class_name,
             properties,
             superclass,

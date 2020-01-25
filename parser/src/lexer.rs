@@ -154,6 +154,17 @@ impl Lexer {
                         "trait" => Some(self.create_token(TokenType::Trait, "trait")),
                         "import" => Some(self.create_token(TokenType::Import, "import")),
                         "match" => Some(self.create_token(TokenType::Match, "match")),
+                        "istype" => Some(self.create_token(TokenType::IsType, "istype")),
+                        "Nil" => Some(self.create_token(TokenType::UppercaseNil, "Nil")),
+                        "Boolean" => Some(self.create_token(TokenType::Boolean, "Boolean")),
+                        "Integer" => Some(self.create_token(TokenType::Integer, "Integer")),
+                        "Float" => Some(self.create_token(TokenType::Float, "Float")),
+                        "String" => Some(self.create_token(TokenType::String, "String")),
+                        "Function" => Some(self.create_token(TokenType::Function, "Function")),
+                        "Class" => Some(self.create_token(TokenType::UppercaseClass, "Class")),
+                        "Trait" => Some(self.create_token(TokenType::UppercaseTrait, "Trait")),
+                        "Array" => Some(self.create_token(TokenType::Array, "Array")),
+                        "Module" => Some(self.create_token(TokenType::Module, "Module")),
                         "true" => Some(self.create_token(
                             TokenType::TokenLiteral {
                                 value: Literal::Keyword(DataKeyword::True),
@@ -251,8 +262,8 @@ mod tests {
     #[test]
     fn test_lexer_with_no_error() {
         let s = "(){}:,.-+;/!*!=;=;==>>=<<=;and;class;else;fun;for;break;if;or;print?return;;".to_owned() +
-            "var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;" +
-            "getter;trait[];import;::;123;=>;match";
+            "var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;getter;" +
+            "trait[];import;::;123;=>;match;istype;Nil;Boolean;Integer;Float;String;Function;Class;Array;Module;Trait";
         let mut lexer = Lexer::new(s.to_owned(), "file".to_owned());
         let expected = Ok(vec![
             Token {
@@ -858,6 +869,182 @@ mod tests {
             Token {
                 token_type: TokenType::Match,
                 lexeme: "match".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::IsType,
+                lexeme: "istype".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::UppercaseNil,
+                lexeme: "Nil".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Boolean,
+                lexeme: "Boolean".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Integer,
+                lexeme: "Integer".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Float,
+                lexeme: "Float".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::String,
+                lexeme: "String".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Function,
+                lexeme: "Function".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::UppercaseClass,
+                lexeme: "Class".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Array,
+                lexeme: "Array".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Module,
+                lexeme: "Module".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::Semicolon,
+                lexeme: ";".to_owned(),
+                location: SourceCodeLocation {
+                    file: "file".to_owned(),
+                    line: 5,
+                },
+            },
+            Token {
+                token_type: TokenType::UppercaseTrait,
+                lexeme: "Trait".to_owned(),
                 location: SourceCodeLocation {
                     file: "file".to_owned(),
                     line: 5,

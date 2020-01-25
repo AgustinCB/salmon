@@ -1,0 +1,40 @@
+import module;
+
+fun test() {}
+
+trait Trait1 {}
+trait Trait2 {}
+class Class1 {}
+class Class2 {}
+class Class3 < Class2 {}
+
+trait Trait1 for Class1 {}
+trait Trait2 for Class2 {}
+
+print nil istype Nil;
+print nil istype Integer;
+print true istype Boolean;
+print true istype Integer;
+print 1 istype Integer;
+print 1 istype Float;
+print 1.0 istype Float;
+print 1.0 istype Integer;
+print module istype Module;
+print module istype Integer;
+print "" istype String;
+print "" istype Integer;
+print [] istype Array;
+print [] istype String;
+print test istype Function;
+print test istype Module;
+print Trait1 istype Trait;
+print Trait1 istype Class;
+print Class1 istype Class;
+print Class1 istype Trait;
+print Class1() istype Class1;
+print Class1() istype Class2;
+print Class1() istype Trait1;
+print Class2() istype Trait1;
+print Class3() istype Class2;
+print Class3() istype Class1;
+print Class3() istype Trait2;

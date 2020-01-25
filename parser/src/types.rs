@@ -67,6 +67,17 @@ pub enum TokenType {
     Import,
     Arrow,
     Match,
+    IsType,
+    UppercaseNil,
+    Boolean,
+    Integer,
+    Float,
+    String,
+    Function,
+    UppercaseClass,
+    UppercaseTrait,
+    Array,
+    Module,
     Identifier { name: String },
     TokenLiteral { value: Literal },
 }
@@ -139,6 +150,21 @@ impl ExpressionFactory {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum Type {
+    Nil,
+    Boolean,
+    Integer,
+    Float,
+    String,
+    Function,
+    Class,
+    Trait,
+    Array,
+    Module,
+    UserDefined(Box<Expression>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExpressionType {
     Conditional {
         condition: Box<Expression>,
@@ -203,6 +229,10 @@ pub enum ExpressionType {
         array: Box<Expression>,
         index: Box<Expression>,
         value: Box<Expression>,
+    },
+    IsType {
+        value: Box<Expression>,
+        checked_type: Type,
     },
 }
 

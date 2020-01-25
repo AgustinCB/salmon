@@ -1,4 +1,4 @@
-use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType, Pass};
+use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType, Type, Pass};
 use std::collections::HashMap;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -271,6 +271,12 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
 
     fn resolve_expression(&mut self, expression: &'a Expression) -> Result<(), Vec<ProgramError>> {
         match &expression.expression_type {
+            ExpressionType::IsType { value, checked_type } => {
+                self.resolve_expression(value)?;
+                if let Type::UserDefined(obj) = checked_type {
+                    self.resolve_expression(obj)?;
+                }
+            }
             ExpressionType::ModuleLiteral {
                 module, field,
             } => {
