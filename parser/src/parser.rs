@@ -5,6 +5,22 @@ use std::vec::IntoIter;
 
 const INTERNAL_MATCH_VALUE_NAME: &str = "@match_value";
 
+macro_rules! parse_branch {
+    ($self: ident, $vec: ident, $location: ident, $value: expr, $next_location: ident) => {
+        $self.consume(
+            TokenType::Arrow,
+            "Expecting `=>` after `*` on match!",
+            &$location,
+        )?;
+        $vec.push(($value, $self.parse_block_statement($next_location)?));
+        $self.consume(
+            TokenType::Comma,
+            "Expecting `,` at the end of branch on match!",
+            &$location,
+        )?;
+    }
+}
+
 struct MethodSet<T> {
     getters: Vec<T>,
     methods: Vec<T>,
@@ -431,28 +447,12 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             "Expected '{' before match branches",
             location,
         )?;
-        let mut branches = vec![];
-        while !self.peek(TokenType::Star) {
-            let next = self.next();
-            let next_location = next.clone().map_or(location.clone(), |n| n.location);
-            if let Some(TokenType::TokenLiteral { value }) = next.map(|t| t.token_type) {
-                self.consume(
-                    TokenType::Arrow,
-                    "Expecting `=>` after `*` on match!",
-                    &location,
-                )?;
-                branches.push((value, self.parse_block_statement(next_location)?));
-                self.consume(
-                    TokenType::Comma,
-                    "Expecting `,` at the end of branch on match!",
-                    &location,
-                )?;
-            } else {
-                return Err(ProgramError {
-                    message: "All branches should match using literals".to_owned(),
-                    location: next_location,
-                })
-            }
+        let (literal_branches, types_branches) = self.parse_match_branches(location)?;
+        if !literal_branches.is_empty() && !types_branches.is_empty() {
+            return Err(ProgramError {
+                message: "`match` statement mixes values and types in branches".to_owned(),
+                location: location.clone(),
+            })
         }
         self.consume(
             TokenType::Star,
@@ -475,7 +475,56 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             "Expected '}' after match branches",
             location,
         )?;
-        let if_elses = branches.into_iter()
+        let if_elses = if types_branches.is_empty() {
+            self.build_if_literal_chain(literal_branches, match_all)
+        } else {
+            self.build_if_type_chain(types_branches, match_all)
+        };
+        Ok(Statement {
+            location: location.clone(),
+            statement_type: StatementType::Block {
+                body: vec![
+                    Box::new(Statement {
+                        location: location.clone(),
+                        statement_type: StatementType::VariableDeclaration {
+                            name: INTERNAL_MATCH_VALUE_NAME.to_owned(),
+                            expression: Some(value),
+                        }
+                    }),
+                    Box::new(if_elses),
+                ]
+            }
+        })
+    }
+
+    fn build_if_type_chain(&self, branches: Vec<(Type, Statement)>, match_all: Statement) -> Statement {
+        branches.into_iter()
+            .fold(match_all, |acc, (checked_type, s)| {
+                let value = Box::new(self.expression_factory.borrow_mut().new_expression(
+                    ExpressionType::VariableLiteral {
+                        identifier: INTERNAL_MATCH_VALUE_NAME.to_owned()
+                    },
+                    s.location.clone(),
+                ));
+                Statement {
+                    location: s.location.clone(),
+                    statement_type: StatementType::If {
+                        condition: self.expression_factory.borrow_mut().new_expression(
+                            ExpressionType::IsType {
+                                value,
+                                checked_type,
+                            },
+                            s.location.clone(),
+                        ),
+                        then: Box::new(s),
+                        otherwise: Some(Box::new(acc)),
+                    }
+                }
+            })
+    }
+
+    fn build_if_literal_chain(&self, branches: Vec<(Literal, Statement)>, match_all: Statement) -> Statement {
+        branches.into_iter()
             .fold(match_all, |acc, (value, s)| {
                 let left = Box::new(self.expression_factory.borrow_mut().new_expression(
                     ExpressionType::ExpressionLiteral { value },
@@ -492,7 +541,9 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                     statement_type: StatementType::If {
                         condition: self.expression_factory.borrow_mut().new_expression(
                             ExpressionType::Binary {
-                                operator: TokenType::EqualEqual, left, right,
+                                operator: TokenType::EqualEqual,
+                                left,
+                                right,
                             },
                             s.location.clone(),
                         ),
@@ -500,22 +551,62 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                         otherwise: Some(Box::new(acc)),
                     }
                 }
-            });
-        Ok(Statement {
-            location: location.clone(),
-            statement_type: StatementType::Block {
-                body: vec![
-                    Box::new(Statement {
-                        location: location.clone(),
-                        statement_type: StatementType::VariableDeclaration {
-                            name: INTERNAL_MATCH_VALUE_NAME.to_owned(),
-                            expression: Some(value),
-                        }
-                    }),
-                    Box::new(if_elses),
-                ]
+            })
+    }
+
+    fn parse_match_branches(
+        &self, location: &SourceCodeLocation
+    ) -> Result<(Vec<(Literal, Statement)>, Vec<(Type, Statement)>), ProgramError> {
+        let mut branches = vec![];
+        let mut types = vec![];
+        while !self.peek(TokenType::Star) && !self.peek(TokenType::RightBrace) {
+            let next = self.next();
+            let next_location = next.clone().map_or(location.clone(), |n| n.location);
+            match next.map(|t| t.token_type) {
+                Some(TokenType::TokenLiteral { value }) => {
+                    parse_branch!(self, branches, location, value, next_location);
+                }
+                Some(TokenType::UppercaseNil) => {
+                    parse_branch!(self, types, location, Type::Nil, next_location);
+                }
+                Some(TokenType::Boolean) => {
+                    parse_branch!(self, types, location, Type::Boolean, next_location);
+                }
+                Some(TokenType::Integer) => {
+                    parse_branch!(self, types, location, Type::Integer, next_location);
+                }
+                Some(TokenType::Float) => {
+                    parse_branch!(self, types, location, Type::Float, next_location);
+                }
+                Some(TokenType::String) => {
+                    parse_branch!(self, types, location, Type::String, next_location);
+                }
+                Some(TokenType::Array) => {
+                    parse_branch!(self, types, location, Type::Array, next_location);
+                }
+                Some(TokenType::Function) => {
+                    parse_branch!(self, types, location, Type::Function, next_location);
+                }
+                Some(TokenType::Module) => {
+                    parse_branch!(self, types, location, Type::Module, next_location);
+                }
+                Some(TokenType::UppercaseClass) => {
+                    parse_branch!(self, types, location, Type::Class, next_location);
+                }
+                Some(TokenType::UppercaseTrait) => {
+                    parse_branch!(self, types, location, Type::Trait, next_location);
+                }
+                Some(TokenType::Identifier { name }) => {
+                    let obj = Box::new(self.parse_variable_or_module_access(name, location)?);
+                    parse_branch!(self, types, location, Type::UserDefined(obj), next_location);
+                }
+                _ => return Err(ProgramError {
+                    message: "All branches should match using literals".to_owned(),
+                    location: next_location,
+                }),
             }
-        })
+        }
+        Ok((branches, types))
     }
 
     fn parse_if_statement(&self, location: &SourceCodeLocation) -> Result<Statement, ProgramError> {

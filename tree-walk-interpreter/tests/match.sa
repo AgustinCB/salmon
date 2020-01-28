@@ -1,3 +1,7 @@
+class Class1 {}
+trait Trait1 {}
+trait Trait1 for Class1 {}
+
 fun withmatch(v) {
   match v {
     1 => {
@@ -18,8 +22,33 @@ fun withmatch(v) {
   }
 }
 
+fun withtypematch(t) {
+  match t {
+    Integer => {
+      print "integer";
+    },
+    Boolean => {
+      print "boolean";
+    },
+    String => {
+      print "String";
+    },
+    Trait1 => {
+      print "Trait1";
+    },
+    * => {
+      print v;
+    },
+  }
+}
+
 withmatch(1);
 withmatch(2);
 withmatch(nil);
 withmatch(true);
 withmatch("hola");
+
+withtypematch(1);
+withtypematch(true);
+withtypematch("");
+withtypematch(Class1());
