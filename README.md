@@ -35,7 +35,8 @@ statement       → exprStmt
                 | whileStmt
                 | returnStmt
                 | block
-                | import ;
+                | import 
+                | moduleStmt ;
 
 stmtWithBreak   → exprStmt
                 | forStmt
@@ -48,6 +49,7 @@ stmtWithBreak   → exprStmt
                 | breakStmt
                 | import ;
 
+moduleStmt      → "mod" IDENTIFIER block ;
 import          → "import" IDENTIFIER ;
 breakStmt       → break ";" ;
 forStmt         → "for" "(" ( varDecl | exprStmt | ";" )

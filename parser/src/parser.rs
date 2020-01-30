@@ -1,7 +1,6 @@
 use crate::types::{DataKeyword, Expression, ExpressionFactory, ExpressionType, FunctionHeader, Literal, ProgramError, SourceCodeLocation, Statement, StatementType, Token, TokenType, Type};
 use std::cell::RefCell;
 use std::iter::Peekable;
-use std::vec::IntoIter;
 
 const INTERNAL_MATCH_VALUE_NAME: &str = "@match_value";
 
@@ -28,14 +27,14 @@ struct MethodSet<T> {
     static_methods: Vec<T>,
 }
 
-pub struct Parser<I: Iterator<Item = Token>> {
+pub struct Parser<'a, I: Iterator<Item = Token<'a>>> {
     block_stack: RefCell<u8>,
     content: RefCell<Peekable<I>>,
     expression_factory: RefCell<ExpressionFactory>,
 }
 
-impl<I: Iterator<Item = Token>> Parser<I> {
-    pub fn new(content: Peekable<I>) -> Parser<I> {
+impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
+    pub fn new(content: Peekable<I>) -> Parser<'a, I> {
         Parser {
             block_stack: RefCell::new(0),
             expression_factory: RefCell::new(ExpressionFactory::new()),
@@ -43,7 +42,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    pub fn parse(&self) -> Result<Vec<Statement>, Vec<ProgramError>> {
+    pub fn parse(&self) -> Result<Vec<Statement<'a>>, Vec<ProgramError<'a>>> {
         let mut output_vec = vec![];
         let mut error_vec = vec![];
 
@@ -61,17 +60,15 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    pub(crate) fn parse_statement(&self) -> Result<Statement, ProgramError> {
+    pub(crate) fn parse_statement(&self) -> Result<Statement<'a>, ProgramError<'a>> {
         match self.dry_next() {
             Some(Token {
                 location,
                 token_type: TokenType::Trait,
-                ..
             }) => self.parse_trait_statement(&location),
             Some(Token {
                 location,
                 token_type: TokenType::Import,
-                ..
             }) => {
                 self.next();
                 let module = self.parse_identifier()?;
@@ -86,60 +83,68 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             Some(Token {
                 location,
                 token_type: TokenType::Class,
-                ..
             }) => self.parse_class_statement(&location),
             Some(Token {
                 location,
                 token_type: TokenType::If,
-                ..
             }) => self.parse_if_statement(&location),
             Some(Token {
                  location,
                  token_type: TokenType::Match,
-                 ..
             }) => self.parse_match_statement(&location),
             Some(Token {
                 location,
                 token_type: TokenType::Return,
-                ..
             }) => self.parse_return_statement(location),
             Some(Token {
                 location,
                 token_type: TokenType::Var,
-                ..
             }) => self.parse_var_statement(&location),
             Some(Token {
                 location,
                 token_type: TokenType::LeftBrace,
-                ..
             }) => self.parse_block_statement(location),
             Some(Token {
                 location,
                 token_type: TokenType::Fun,
-                ..
             }) => self.parse_fun_statement(&location),
             Some(Token {
                 location,
                 token_type: TokenType::While,
-                ..
             }) => self.parse_while_statement(&location),
             Some(Token {
                 location,
                 token_type: TokenType::For,
-                ..
             }) => self.parse_for_statement(&location),
             Some(Token {
                 location,
                 token_type: TokenType::EOF,
-                ..
             }) => Ok(Statement {
                 location,
                 statement_type: StatementType::EOF,
             }),
             Some(Token {
                 location,
+                token_type: TokenType::Mod
+            }) => {
+                self.next();
+                let name = self.parse_identifier()?;
+                let block = self.parse_block_statement(location.clone())?;
+                if let StatementType::Block { body } = block.statement_type {
+                    Ok(Statement {
+                        location,
+                        statement_type: StatementType::Module {
+                            name,
+                            statements: body,
+                        }
+                    })
+                } else {
+                    panic!("Cannot happen")
+                }
+            }
+            Some(Token {
+                location,
                 token_type: TokenType::Print,
-                ..
             }) => {
                 self.next();
                 let expression = self.parse_expression()?;
@@ -152,7 +157,6 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             Some(Token {
                 location,
                 token_type: TokenType::Break,
-                ..
             }) => {
                 self.next();
                 self.consume(
@@ -176,7 +180,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 message: "Unexpected end of file".to_owned(),
                 location: SourceCodeLocation {
                     line: 0,
-                    file: "".to_owned(),
+                    file: "",
                 },
             }),
             _ => {
@@ -195,12 +199,12 @@ impl<I: Iterator<Item = Token>> Parser<I> {
     }
 
     #[inline]
-    fn dry_next(&self) -> Option<Token> {
+    fn dry_next(&self) -> Option<Token<'a>> {
         self.content.borrow_mut().peek().cloned()
     }
 
     #[inline]
-    fn next(&self) -> Option<Token> {
+    fn next(&self) -> Option<Token<'a>> {
         self.content.borrow_mut().next()
     }
 
@@ -210,11 +214,11 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         self.content.borrow_mut().peek().is_none()
     }
 
-    fn parse_method_set<T, C: Fn(&mut Vec<T>, &SourceCodeLocation) -> Result<(), ProgramError>>(
+    fn parse_method_set<T, C: Fn(&mut Vec<T>, &SourceCodeLocation<'a>) -> Result<(), ProgramError<'a>>>(
         &self,
-        location: &SourceCodeLocation,
+        location: &SourceCodeLocation<'a>,
         action: C,
-    ) -> Result<MethodSet<T>, ProgramError> {
+    ) -> Result<MethodSet<T>, ProgramError<'a>> {
         let mut methods = vec![];
         let mut static_methods = vec![];
         let mut setters = vec![];
@@ -247,13 +251,12 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_trait_statement(
         &self,
-        location: &SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.consume(TokenType::Trait, "Expected trait keyword", location)?;
         if let Some(Token {
             token_type: TokenType::Identifier { name },
             location,
-            ..
         }) = self.next()
         {
             if self.peek(TokenType::LeftBrace) {
@@ -272,14 +275,13 @@ impl<I: Iterator<Item = Token>> Parser<I> {
     fn parse_trait_implementation(
         &self,
         trait_name: String,
-        location: &SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         let trait_name = self.parse_variable_or_module_access(trait_name, &location)?;
         self.consume(TokenType::For, "Expected 'for' after trait name", location)?;
         let class_name = if let Some(Token {
             token_type: TokenType::Identifier { name },
             location,
-            ..
         }) = self.next() {
             self.parse_variable_or_module_access(name, &location)
         } else {
@@ -315,8 +317,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
     fn parse_trait_declaration(
         &self,
         name: String,
-        location: &SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.consume(
             TokenType::LeftBrace,
             "Expected '{' before trait body",
@@ -354,13 +356,12 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_class_statement(
         &self,
-        location: &SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.next();
         if let Some(Token {
             token_type: TokenType::Identifier { name },
             location,
-            ..
         }) = self.next()
         {
             let superclass = if self.peek(TokenType::Less) {
@@ -409,8 +410,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_class_methods(
         &self,
-        location: &SourceCodeLocation,
-    ) -> Result<MethodSet<Box<Statement>>, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<MethodSet<Box<Statement<'a>>>, ProgramError<'a>> {
         let method_set = self.parse_method_set(&location, |vector, location| {
             let f = Box::new(self.parse_function(location)?);
             vector.push(f);
@@ -439,7 +440,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         Ok(method_set)
     }
 
-    fn parse_match_statement(&self, location: &SourceCodeLocation) -> Result<Statement, ProgramError> {
+    fn parse_match_statement(&self, location: &SourceCodeLocation<'a>) -> Result<Statement<'a>, ProgramError<'a>> {
         self.next();
         let value = self.parse_expression()?;
         self.consume(
@@ -497,7 +498,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         })
     }
 
-    fn build_if_type_chain(&self, branches: Vec<(Type, Statement)>, match_all: Statement) -> Statement {
+    fn build_if_type_chain(&self, branches: Vec<(Type<'a>, Statement<'a>)>, match_all: Statement<'a>) -> Statement<'a> {
         branches.into_iter()
             .fold(match_all, |acc, (checked_type, s)| {
                 let value = Box::new(self.expression_factory.borrow_mut().new_expression(
@@ -523,7 +524,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             })
     }
 
-    fn build_if_literal_chain(&self, branches: Vec<(Literal, Statement)>, match_all: Statement) -> Statement {
+    fn build_if_literal_chain(&self, branches: Vec<(Literal, Statement<'a>)>, match_all: Statement<'a>) -> Statement<'a> {
         branches.into_iter()
             .fold(match_all, |acc, (value, s)| {
                 let left = Box::new(self.expression_factory.borrow_mut().new_expression(
@@ -555,8 +556,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
     }
 
     fn parse_match_branches(
-        &self, location: &SourceCodeLocation
-    ) -> Result<(Vec<(Literal, Statement)>, Vec<(Type, Statement)>), ProgramError> {
+        &self, location: &SourceCodeLocation<'a>
+    ) -> Result<(Vec<(Literal, Statement<'a>)>, Vec<(Type<'a>, Statement<'a>)>), ProgramError<'a>> {
         let mut branches = vec![];
         let mut types = vec![];
         while !self.peek(TokenType::Star) && !self.peek(TokenType::RightBrace) {
@@ -609,7 +610,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         Ok((branches, types))
     }
 
-    fn parse_if_statement(&self, location: &SourceCodeLocation) -> Result<Statement, ProgramError> {
+    fn parse_if_statement(&self, location: &SourceCodeLocation<'a>) -> Result<Statement<'a>, ProgramError<'a>> {
         self.next();
         self.consume(
             TokenType::LeftParen,
@@ -641,8 +642,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_return_statement(
         &self,
-        location: SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.content.borrow_mut().next();
         if self.peek(TokenType::Semicolon) {
             self.consume(TokenType::Semicolon, "Expected semicolon", &location)?;
@@ -662,8 +663,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_var_statement(
         &self,
-        location: &SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.next();
         if let Some(TokenType::Identifier { name }) = self.next().map(|t| t.token_type) {
             match self.next() {
@@ -703,8 +704,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_block_statement(
         &self,
-        mut location: SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        mut location: SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.consume(TokenType::LeftBrace, "Expected left brace", &location)?;
         let mut statements = vec![];
         *self.block_stack.borrow_mut() += 1;
@@ -723,8 +724,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_anonymous_function(
         &self,
-        location: SourceCodeLocation,
-    ) -> Result<Expression, ProgramError> {
+        location: SourceCodeLocation<'a>,
+    ) -> Result<Expression<'a>, ProgramError<'a>> {
         self.next();
         let arguments = self.parse_parameters(&location, Parser::parse_identifier)?;
         self.consume(
@@ -747,20 +748,19 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_fun_statement(
         &self,
-        location: &SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.content.borrow_mut().next();
         self.parse_function(location)
     }
 
     fn parse_function_header(
         &self,
-        location: &SourceCodeLocation,
-    ) -> Result<(String, Vec<String>), ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<(String, Vec<String>), ProgramError<'a>> {
         if let Some(Token {
             token_type: TokenType::Identifier { name },
             location,
-            ..
         }) = self.next()
         {
             self.consume(
@@ -783,7 +783,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_function(&self, location: &SourceCodeLocation) -> Result<Statement, ProgramError> {
+    fn parse_function(&self, location: &SourceCodeLocation<'a>) -> Result<Statement<'a>, ProgramError<'a>> {
         let (name, arguments) = self.parse_function_header(location)?;
         let body = if let StatementType::Block { body } =
             self.parse_block_statement(location.clone())?.statement_type
@@ -804,8 +804,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_while_statement(
         &self,
-        location: &SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.next();
         self.consume(
             TokenType::LeftParen,
@@ -832,8 +832,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_for_statement(
         &self,
-        location: &SourceCodeLocation,
-    ) -> Result<Statement, ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.next();
         self.consume(
             TokenType::LeftParen,
@@ -844,7 +844,6 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             Some(Token {
                 location,
                 token_type: TokenType::Semicolon,
-                ..
             }) => {
                 self.next();
                 Ok(Statement {
@@ -864,7 +863,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 message: "Unexpected end of file".to_owned(),
                 location: SourceCodeLocation {
                     line: 0,
-                    file: "".to_owned(),
+                    file: "",
                 },
             }),
         }?;
@@ -940,17 +939,16 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         })
     }
 
-    pub(crate) fn parse_expression(&self) -> Result<Expression, ProgramError> {
+    pub(crate) fn parse_expression(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         self.parse_assignment()
     }
 
-    fn parse_assignment(&self) -> Result<Expression, ProgramError> {
+    fn parse_assignment(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         let variable = self.parse_ternary()?;
         match self.dry_next() {
             Some(Token {
                 token_type: TokenType::Equal,
                 location,
-                ..
             }) => {
                 self.next();
                 if self.dry_next().is_some() {
@@ -1007,7 +1005,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_ternary(&self) -> Result<Expression, ProgramError> {
+    fn parse_ternary(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         let condition = self.parse_or()?;
         if self.peek(TokenType::Question) {
             self.next();
@@ -1032,15 +1030,15 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_or(&self) -> Result<Expression, ProgramError> {
+    fn parse_or(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         self.parse_binary(Parser::parse_and, Parser::parse_or, &[TokenType::Or])
     }
 
-    fn parse_and(&self) -> Result<Expression, ProgramError> {
+    fn parse_and(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         self.parse_binary(Parser::parse_equality, Parser::parse_and, &[TokenType::And])
     }
 
-    fn parse_equality(&self) -> Result<Expression, ProgramError> {
+    fn parse_equality(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         self.parse_binary(
             Parser::parse_comparison,
             Parser::parse_equality,
@@ -1048,7 +1046,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         )
     }
 
-    fn parse_comparison(&self) -> Result<Expression, ProgramError> {
+    fn parse_comparison(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         self.parse_binary(
             Parser::parse_addition,
             Parser::parse_comparison,
@@ -1061,7 +1059,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         )
     }
 
-    fn parse_addition(&self) -> Result<Expression, ProgramError> {
+    fn parse_addition(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         self.parse_binary(
             Parser::parse_multiplication,
             Parser::parse_addition,
@@ -1069,7 +1067,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         )
     }
 
-    fn parse_multiplication(&self) -> Result<Expression, ProgramError> {
+    fn parse_multiplication(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         self.parse_binary(
             Parser::parse_unary,
             Parser::parse_multiplication,
@@ -1077,7 +1075,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         )
     }
 
-    fn parse_unary(&self) -> Result<Expression, ProgramError> {
+    fn parse_unary(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         if self
             .content
             .borrow_mut()
@@ -1099,7 +1097,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_istype(&self) -> Result<Expression, ProgramError> {
+    fn parse_istype(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         let element = self.parse_call()?;
         if self.peek(TokenType::IsType) {
             let location = self.next().unwrap().location;
@@ -1116,7 +1114,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_checked_type(&self, location: &SourceCodeLocation) -> Result<Type, ProgramError> {
+    fn parse_checked_type(&self, location: &SourceCodeLocation<'a>) -> Result<Type<'a>, ProgramError<'a>> {
         match self.next() {
             Some(Token { token_type: TokenType::UppercaseNil, .. }) => Ok(Type::Nil),
             Some(Token { token_type: TokenType::Boolean, .. }) => Ok(Type::Boolean),
@@ -1142,7 +1140,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_call(&self) -> Result<Expression, ProgramError> {
+    fn parse_call(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         let mut callee = self.parse_array_element()?;
         loop {
             match self.dry_next().map(|t| t.token_type) {
@@ -1157,7 +1155,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_call_property(&self, callee: Expression) -> Result<Expression, ProgramError> {
+    fn parse_call_property(&self, callee: Expression<'a>) -> Result<Expression<'a>, ProgramError<'a>> {
         self.consume(
             TokenType::Dot,
             "Expected '.' on property call expression",
@@ -1177,7 +1175,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_call_function(&self, callee: Expression) -> Result<Expression, ProgramError> {
+    fn parse_call_function(&self, callee: Expression<'a>) -> Result<Expression<'a>, ProgramError<'a>> {
         self.consume(
             TokenType::LeftParen,
             "Expected '(' on function call expression",
@@ -1199,11 +1197,11 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         ))
     }
 
-    fn parse_parameters<R, F: Fn(&Parser<I>) -> Result<R, ProgramError>>(
+    fn parse_parameters<R, F: Fn(&Parser<'a, I>) -> Result<R, ProgramError<'a>>>(
         &self,
-        location: &SourceCodeLocation,
+        location: &SourceCodeLocation<'a>,
         parser: F,
-    ) -> Result<Vec<R>, ProgramError> {
+    ) -> Result<Vec<R>, ProgramError<'a>> {
         let mut args = vec![];
         loop {
             match self.dry_next() {
@@ -1228,7 +1226,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         Ok(args)
     }
 
-    fn parse_identifier(&self) -> Result<String, ProgramError> {
+    fn parse_identifier(&self) -> Result<String, ProgramError<'a>> {
         match self.next() {
             Some(Token {
                 token_type: TokenType::Identifier { name },
@@ -1242,7 +1240,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_array_element(&self) -> Result<Expression, ProgramError> {
+    fn parse_array_element(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         let array = self.parse_primary()?;
         if self.peek(TokenType::LeftSquareBrace) {
             self.next();
@@ -1265,22 +1263,19 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_primary(&self) -> Result<Expression, ProgramError> {
+    fn parse_primary(&self) -> Result<Expression<'a>, ProgramError<'a>> {
         match self.next() {
             Some(Token {
                 token_type: TokenType::LeftSquareBrace,
                 location,
-                ..
             }) => self.parse_array(location),
             Some(Token {
                 token_type: TokenType::Fun,
                 location,
-                ..
             }) => self.parse_anonymous_function(location),
             Some(Token {
                 token_type: TokenType::TokenLiteral { value },
                 location,
-                ..
             }) => Ok(self
                 .expression_factory
                 .borrow_mut()
@@ -1288,29 +1283,26 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             Some(Token {
                 token_type: TokenType::Identifier { name },
                 location,
-                ..
             }) => self.parse_variable_or_module_access(name, &location),
             Some(Token {
                 token_type: TokenType::LeftParen,
                 location,
-                ..
             }) => self.parse_group(location),
             None => Err(ProgramError {
                 message: "Unexpected end of file! Expecting primary".to_owned(),
                 location: SourceCodeLocation {
-                    file: "".to_owned(),
+                    file: "",
                     line: 0,
                 },
             }),
             Some(Token {
                 token_type,
                 location,
-                lexeme,
-            }) => self.parse_left_side_missing(token_type, location, lexeme),
+            }) => self.parse_left_side_missing(&token_type, &location),
         }
     }
 
-    fn parse_variable_or_module_access(&self, name: String, location: &SourceCodeLocation) -> Result<Expression, ProgramError> {
+    fn parse_variable_or_module_access(&self, name: String, location: &SourceCodeLocation<'a>) -> Result<Expression<'a>, ProgramError<'a>> {
         if self.peek(TokenType::DoubleColon) {
             self.consume(TokenType::DoubleColon, "Expected `::` on module access", location)?;
             let field = Box::new(self.parse_call()?);
@@ -1329,7 +1321,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         }
     }
 
-    fn parse_array(&self, location: SourceCodeLocation) -> Result<Expression, ProgramError> {
+    fn parse_array(&self, location: SourceCodeLocation<'a>) -> Result<Expression<'a>, ProgramError<'a>> {
         if self.peek(TokenType::RightSquareBrace) {
             self.next();
             return Ok(self
@@ -1390,9 +1382,9 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 location,
             )),
             Some(Token {
-                location, lexeme, ..
+                location, token_type,
             }) => Err(ProgramError {
-                message: format!("Unexpected token `{}`", lexeme),
+                message: format!("Unexpected token `{:?}`", token_type),
                 location,
             }),
             None => Err(ProgramError {
@@ -1404,15 +1396,14 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     fn parse_left_side_missing(
         &self,
-        token_type: TokenType,
-        location: SourceCodeLocation,
-        lexeme: String,
-    ) -> Result<Expression, ProgramError> {
+        token_type: &TokenType,
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<Expression<'a>, ProgramError<'a>> {
         match token_type {
             TokenType::EqualEqual | TokenType::BangEqual => {
                 self.parse_equality()?;
                 Err(ProgramError {
-                    location,
+                    location: location.clone(),
                     message: "Equality without left side".to_owned(),
                 })
             }
@@ -1422,74 +1413,49 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             | TokenType::LessEqual => {
                 self.parse_comparison()?;
                 Err(ProgramError {
-                    location,
+                    location: location.clone(),
                     message: "Comparision without left side".to_owned(),
                 })
             }
             TokenType::Plus => {
                 self.parse_addition()?;
                 Err(ProgramError {
-                    location,
+                    location: location.clone(),
                     message: "Addition without left side".to_owned(),
                 })
             }
             TokenType::Slash | TokenType::Star => {
                 self.parse_multiplication()?;
                 Err(ProgramError {
-                    location,
+                    location: location.clone(),
                     message: "Multiplication without left side".to_owned(),
                 })
             }
             _ => Err(ProgramError {
-                location,
-                message: format!("Expecting a literal, but got {}!", lexeme),
+                location: location.clone(),
+                message: format!("Expecting a literal, but got {:?}!", token_type),
             }),
         }
     }
 
-    fn parse_group(&self, location: SourceCodeLocation) -> Result<Expression, ProgramError> {
-        let content = self.take_while(|t| t.token_type != TokenType::RightParen);
-        let parser = Parser::new(content.peekable());
-        if let Some(Token {
-            token_type: TokenType::RightParen,
-            ..
-        }) = self.next()
-        {
-            let expression = Box::new(parser.parse_expression()?);
-            Ok(self
-                .expression_factory
-                .borrow_mut()
-                .new_expression(ExpressionType::Grouping { expression }, location))
-        } else {
-            Err(ProgramError {
-                location,
-                message: "Missing `)`.".to_owned(),
-            })
-        }
-    }
-
-    fn take_while<F: Fn(&Token) -> bool>(&self, f: F) -> Peekable<IntoIter<Token>> {
-        let mut buffer = vec![];
-        while let Some(t) = self.dry_next() {
-            if f(&t) {
-                buffer.push(t);
-                self.next();
-            } else {
-                break;
-            }
-        }
-        buffer.into_iter().peekable()
+    fn parse_group(&self, location: SourceCodeLocation<'a>) -> Result<Expression<'a>, ProgramError<'a>> {
+        let expression = Box::new(self.parse_expression()?);
+        self.consume(TokenType::RightParen, "Missing `)`", &location)?;
+        Ok(self
+            .expression_factory
+            .borrow_mut()
+            .new_expression(ExpressionType::Grouping { expression }, location))
     }
 
     fn parse_binary<
-        L: Fn(&Parser<I>) -> Result<Expression, ProgramError>,
-        R: Fn(&Parser<I>) -> Result<Expression, ProgramError>,
+        L: Fn(&Parser<'a, I>) -> Result<Expression<'a>, ProgramError<'a>>,
+        R: Fn(&Parser<'a, I>) -> Result<Expression<'a>, ProgramError<'a>>,
     >(
         &self,
         parse_left: L,
         parse_right: R,
         operators: &[TokenType],
-    ) -> Result<Expression, ProgramError> {
+    ) -> Result<Expression<'a>, ProgramError<'a>> {
         let left = parse_left(self)?;
         if self
             .dry_next()
@@ -1524,8 +1490,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         &self,
         token: TokenType,
         message: &str,
-        location: &SourceCodeLocation,
-    ) -> Result<(), ProgramError> {
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<(), ProgramError<'a>> {
         match self.next() {
             Some(t) if t.token_type == token => Ok(()),
             Some(t) => Err(ProgramError {
@@ -1550,28 +1516,28 @@ mod test {
         StatementType, Token, TokenType,
     };
 
-    fn create_expression(
-        expression_type: ExpressionType,
-        location: SourceCodeLocation,
-    ) -> Expression {
+    fn create_expression<'a>(
+        expression_type: ExpressionType<'a>,
+        location: SourceCodeLocation<'a>,
+    ) -> Expression<'a> {
         let mut factory = ExpressionFactory::new();
         factory.new_expression(expression_type, location)
     }
 
-    fn create_expression_with_id(
-        expression_type: ExpressionType,
-        location: SourceCodeLocation,
+    fn create_expression_with_id<'a>(
+        expression_type: ExpressionType<'a>,
+        location: SourceCodeLocation<'a>,
         counter: usize,
-    ) -> Expression {
+    ) -> Expression<'a> {
         let mut factory = ExpressionFactory::new_starting(counter);
         factory.new_expression(expression_type, location)
     }
 
-    fn create_statement_expression(
-        expression_type: ExpressionType,
-        location: SourceCodeLocation,
+    fn create_statement_expression<'a>(
+        expression_type: ExpressionType<'a>,
+        location: SourceCodeLocation<'a>,
         counter: usize,
-    ) -> Statement {
+    ) -> Statement<'a> {
         Statement {
             location: location.clone(),
             statement_type: StatementType::Expression {
@@ -1584,14 +1550,13 @@ mod test {
     fn parse_literal() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![Token {
             location: location.clone(),
             token_type: TokenType::TokenLiteral {
                 value: Literal::Float(1.0),
             },
-            lexeme: "1.0".to_string(),
         }];
         let parser = Parser::new(input.into_iter().peekable());
         let result = parser.parse_expression().unwrap();
@@ -1611,14 +1576,13 @@ mod test {
     fn parse_identifier() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![Token {
             location: location.clone(),
             token_type: TokenType::Identifier {
                 name: "identifier".to_string(),
             },
-            lexeme: "1.0".to_string(),
         }];
         let parser = Parser::new(input.into_iter().peekable());
         let result = parser.parse_expression().unwrap();
@@ -1638,32 +1602,29 @@ mod test {
     fn parse_identifier_group() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
         let result = parser.parse_expression().unwrap();
         assert_eq!(
             result,
-            create_expression(
+            create_expression_with_id(
                 ExpressionType::Grouping {
                     expression: Box::new(create_expression(
                         ExpressionType::VariableLiteral {
@@ -1673,6 +1634,7 @@ mod test {
                     )),
                 },
                 location,
+                1,
             )
         );
         assert!(parser.is_empty());
@@ -1682,20 +1644,18 @@ mod test {
     fn parse_identifier_group_without_right_paren() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -1708,25 +1668,22 @@ mod test {
     fn parse_identifier_group_without_right_paren_and_more_content() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -1739,7 +1696,7 @@ mod test {
     fn parse_call_with_no_arguments() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
@@ -1747,17 +1704,14 @@ mod test {
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -1785,7 +1739,7 @@ mod test {
     fn parse_call_with_one_arguments() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
@@ -1793,24 +1747,20 @@ mod test {
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -1844,7 +1794,7 @@ mod test {
     fn parse_call_with_multiple_arguments() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
@@ -1852,36 +1802,30 @@ mod test {
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Comma,
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -1994,7 +1938,7 @@ mod test {
     fn parse_ternary() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
@@ -2002,31 +1946,26 @@ mod test {
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "identifier".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Question,
-                lexeme: "?".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier1".to_string(),
                 },
-                lexeme: "identifier1".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Colon,
-                lexeme: ":".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier2".to_string(),
                 },
-                lexeme: "1.0".to_string(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2067,7 +2006,7 @@ mod test {
     fn parse_assignment() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
@@ -2075,19 +2014,16 @@ mod test {
                 token_type: TokenType::Identifier {
                     name: "identifier".to_string(),
                 },
-                lexeme: "identifier".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Equal,
-                lexeme: "=".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2116,42 +2052,36 @@ mod test {
     fn parse_if() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::If,
-                lexeme: "if".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2190,59 +2120,50 @@ mod test {
     fn parse_if_else() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::If,
-                lexeme: "if".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Else,
-                lexeme: "else".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2282,25 +2203,22 @@ mod test {
     fn parse_var() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::Var,
-                lexeme: "var".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_owned(),
                 },
-                lexeme: "identifier".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2322,37 +2240,32 @@ mod test {
     fn parse_var_with_expression() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::Var,
-                lexeme: "var".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_owned(),
                 },
-                lexeme: "identifier".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Equal,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2379,42 +2292,36 @@ mod test {
     fn parse_block() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftBrace,
-                lexeme: "{".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_owned(),
                 },
-                lexeme: "identifier".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightBrace,
-                lexeme: "}".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2459,71 +2366,60 @@ mod test {
     fn parse_fun() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::Fun,
-                lexeme: "fun".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_owned(),
                 },
-                lexeme: "identifier".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "argument".to_owned(),
                 },
-                lexeme: "argument".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftBrace,
-                lexeme: "{".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_owned(),
                 },
-                lexeme: "identifier".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightBrace,
-                lexeme: "}".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2570,64 +2466,54 @@ mod test {
     fn parse_while() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::While,
-                lexeme: "while".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "argument".to_owned(),
                 },
-                lexeme: "argument".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftBrace,
-                lexeme: "{".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_owned(),
                 },
-                lexeme: "identifier".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightBrace,
-                lexeme: "}".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2684,93 +2570,78 @@ mod test {
     fn parse_full_for() {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: TokenType::For,
-                lexeme: "for".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftParen,
-                lexeme: "(".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Var,
-                lexeme: "var".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_owned(),
                 },
-                lexeme: "identifier".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "argument".to_owned(),
                 },
-                lexeme: "argument".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "argument".to_owned(),
                 },
-                lexeme: "argument".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightParen,
-                lexeme: ")".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::LeftBrace,
-                lexeme: "{".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
                     name: "identifier".to_owned(),
                 },
-                lexeme: "identifier".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::Semicolon,
-                lexeme: ";".to_owned(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::RightBrace,
-                lexeme: "}".to_owned(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2859,7 +2730,7 @@ mod test {
     fn test_binary(token_type: TokenType) {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
@@ -2867,19 +2738,16 @@ mod test {
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: token_type.clone(),
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());
@@ -2913,20 +2781,18 @@ mod test {
     fn test_unary(token_type: TokenType) {
         let location = SourceCodeLocation {
             line: 1,
-            file: "".to_owned(),
+            file: "",
         };
         let input = vec![
             Token {
                 location: location.clone(),
                 token_type: token_type.clone(),
-                lexeme: "1.0".to_string(),
             },
             Token {
                 location: location.clone(),
                 token_type: TokenType::TokenLiteral {
                     value: Literal::Float(1.0),
                 },
-                lexeme: "1.0".to_string(),
             },
         ];
         let parser = Parser::new(input.into_iter().peekable());

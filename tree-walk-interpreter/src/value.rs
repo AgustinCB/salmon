@@ -7,16 +7,14 @@ use std::fmt::{Display, Error, Formatter};
 use std::ops::{Neg, Not};
 use std::rc::Rc;
 use crate::state::State;
-use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct LoxModule {
-    pub state: State,
-    pub locals: HashMap<usize, usize>,
+pub struct LoxModule<'a> {
+    pub state: State<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Value {
+pub enum Value<'a> {
     Nil,
     Uninitialized,
     Boolean {
@@ -31,9 +29,9 @@ pub enum Value {
     String {
         value: String,
     },
-    Function(LoxFunction),
-    Class(LoxClass),
-    Object(LoxObject),
+    Function(LoxFunction<'a>),
+    Class(LoxClass<'a>),
+    Object(LoxObject<'a>),
     Trait {
         name: String,
         methods: Vec<FunctionHeader>,
@@ -43,12 +41,12 @@ pub enum Value {
     },
     Array {
         capacity: usize,
-        elements: Rc<RefCell<Vec<Box<Value>>>>,
+        elements: Rc<RefCell<Vec<Box<Value<'a>>>>>,
     },
-    Module(LoxModule),
+    Module(LoxModule<'a>),
 }
 
-impl Value {
+impl<'a> Value<'a> {
     pub fn is_number(&self) -> bool {
         match self {
             Value::Integer { .. } => true,
@@ -83,10 +81,10 @@ impl Value {
     }
 }
 
-impl Neg for Value {
-    type Output = Value;
+impl<'a> Neg for Value<'a> {
+    type Output = Value<'a>;
 
-    fn neg(self) -> Value {
+    fn neg(self) -> Value<'a> {
         match self {
             Value::Integer { value } => Value::Integer { value: -value },
             Value::Float { value } => Value::Float { value: -value },
@@ -95,8 +93,8 @@ impl Neg for Value {
     }
 }
 
-impl Not for Value {
-    type Output = Value;
+impl<'a> Not for Value<'a> {
+    type Output = Value<'a>;
 
     fn not(self) -> Self::Output {
         match self {
@@ -116,7 +114,7 @@ pub enum ValueError {
 }
 
 impl ValueError {
-    pub fn into_program_error(self, location: &SourceCodeLocation) -> ProgramError {
+    pub fn into_program_error<'a>(self, location: &SourceCodeLocation<'a>) -> ProgramError<'a> {
         ProgramError {
             location: location.clone(),
             message: self.to_string(),
@@ -135,9 +133,9 @@ impl ToString for ValueError {
     }
 }
 
-impl TryFrom<Value> for i64 {
+impl<'a> TryFrom<Value<'a>> for i64 {
     type Error = ValueError;
-    fn try_from(value: Value) -> Result<i64, Self::Error> {
+    fn try_from(value: Value<'a>) -> Result<i64, Self::Error> {
         match value {
             Value::Integer { value } => Ok(value),
             Value::Float { value } => Ok(value as _),
@@ -146,9 +144,9 @@ impl TryFrom<Value> for i64 {
     }
 }
 
-impl TryFrom<Value> for f32 {
+impl<'a> TryFrom<Value<'a>> for f32 {
     type Error = ValueError;
-    fn try_from(value: Value) -> Result<f32, Self::Error> {
+    fn try_from(value: Value<'a>) -> Result<f32, Self::Error> {
         match value {
             Value::Float { value } => Ok(value),
             Value::Integer { value } => Ok(value as _),
@@ -157,7 +155,7 @@ impl TryFrom<Value> for f32 {
     }
 }
 
-impl TryInto<String> for Value {
+impl<'a> TryInto<String> for Value<'a> {
     type Error = ValueError;
     fn try_into(self) -> Result<String, Self::Error> {
         match self {
@@ -167,8 +165,8 @@ impl TryInto<String> for Value {
     }
 }
 
-impl Into<Value> for &Literal {
-    fn into(self) -> Value {
+impl<'a> Into<Value<'a>> for &Literal {
+    fn into(self) -> Value<'a> {
         match self {
             Literal::Float(value) => Value::Float { value: *value },
             Literal::Integer(value) => Value::Integer { value: *value as _ },
@@ -182,7 +180,7 @@ impl Into<Value> for &Literal {
     }
 }
 
-impl Display for Value {
+impl<'a> Display for Value<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             Value::Float { value } => f.write_str(value.to_string().as_str()),

@@ -1,28 +1,29 @@
 use crate::function::LoxFunction;
-use crate::value::{Value, LoxModule};
+use crate::value::Value;
 use parser::types::{ProgramError, SourceCodeLocation, Statement, StatementType};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use crate::interpreter::Interpreter;
 
-fn function_declaration_to_lox_funxtion(
+fn function_declaration_to_lox_funxtion<'a>(
     arguments: &[String],
-    body: &[Box<Statement>],
-    location: &SourceCodeLocation,
-    environments: &[Rc<RefCell<HashMap<String, Value>>>],
-) -> LoxFunction {
+    body: Vec<&'a Statement<'a>>,
+    location: &SourceCodeLocation<'a>,
+    environments: &[Rc<RefCell<HashMap<String, Value<'a>>>>],
+) -> LoxFunction<'a> {
     LoxFunction {
         arguments: arguments.to_vec(),
-        body: body.iter().map(|s| (**s).clone()).collect(),
+        body,
         environments: environments.to_vec(),
         location: location.clone(),
     }
 }
 
-fn statement_list_to_function_hash_map(
-    statements: &[&Statement],
-    environments: &[Rc<RefCell<HashMap<String, Value>>>],
-) -> HashMap<String, LoxFunction> {
+fn statement_list_to_function_hash_map<'a>(
+    statements: &[&'a Statement<'a>],
+    environments: &[Rc<RefCell<HashMap<String, Value<'a>>>>],
+) -> HashMap<String, LoxFunction<'a>> {
     let mut functions = HashMap::default();
     for s in statements {
         match &s.statement_type {
@@ -35,7 +36,7 @@ fn statement_list_to_function_hash_map(
                     name.clone(),
                     function_declaration_to_lox_funxtion(
                         arguments,
-                        body,
+                        body.iter().map(AsRef::as_ref).collect(),
                         &s.location,
                         &environments,
                     ),
@@ -48,26 +49,26 @@ fn statement_list_to_function_hash_map(
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct LoxClass {
-    methods: Rc<RefCell<HashMap<String, LoxFunction>>>,
-    getters: Rc<RefCell<HashMap<String, LoxFunction>>>,
-    setters: Rc<RefCell<HashMap<String, LoxFunction>>>,
+pub struct LoxClass<'a> {
+    methods: Rc<RefCell<HashMap<String, LoxFunction<'a>>>>,
+    getters: Rc<RefCell<HashMap<String, LoxFunction<'a>>>>,
+    setters: Rc<RefCell<HashMap<String, LoxFunction<'a>>>>,
     traits: Rc<RefCell<HashSet<String>>>,
-    pub superclass: Option<Box<LoxClass>>,
+    pub superclass: Option<Box<LoxClass<'a>>>,
     pub name: String,
-    pub static_instance: LoxObject,
+    pub static_instance: LoxObject<'a>,
 }
 
-impl LoxClass {
+impl<'a> LoxClass<'a> {
     pub fn new(
         name: String,
-        static_method_list: &[&Statement],
-        method_list: &[&Statement],
-        getters: &[&Statement],
-        setters: &[&Statement],
-        superclass: Option<LoxClass>,
-        environments: Vec<Rc<RefCell<HashMap<String, Value>>>>,
-    ) -> LoxClass {
+        static_method_list: &[&'a Statement<'a>],
+        method_list: &[&'a Statement<'a>],
+        getters: &[&'a Statement<'a>],
+        setters: &[&'a Statement<'a>],
+        superclass: Option<LoxClass<'a>>,
+        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+    ) -> LoxClass<'a> {
         let methods = Rc::new(RefCell::new(statement_list_to_function_hash_map(
             method_list,
             &environments,
@@ -92,7 +93,7 @@ impl LoxClass {
                         name.clone(),
                         function_declaration_to_lox_funxtion(
                             arguments,
-                            body,
+                            body.iter().map(AsRef::as_ref).collect(),
                             &ms.location,
                             &environments,
                         ),
@@ -124,8 +125,8 @@ impl LoxClass {
 
     pub fn append_methods(
         &self,
-        method_list: &[&Statement],
-        environments: Vec<Rc<RefCell<HashMap<String, Value>>>>,
+        method_list: &[&'a Statement<'a>],
+        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
     ) {
         let methods = statement_list_to_function_hash_map(method_list, &environments);
         self.methods.borrow_mut().extend(methods);
@@ -133,8 +134,8 @@ impl LoxClass {
 
     pub fn append_static_methods(
         &self,
-        method_list: &[&Statement],
-        environments: Vec<Rc<RefCell<HashMap<String, Value>>>>,
+        method_list: &[&'a Statement<'a>],
+        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
     ) {
         self.static_instance
             .append_methods(method_list, environments);
@@ -142,8 +143,8 @@ impl LoxClass {
 
     pub fn append_getters(
         &self,
-        method_list: &[&Statement],
-        environments: Vec<Rc<RefCell<HashMap<String, Value>>>>,
+        method_list: &[&'a Statement<'a>],
+        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
     ) {
         let getters = statement_list_to_function_hash_map(method_list, &environments);
         self.getters.borrow_mut().extend(getters);
@@ -151,8 +152,8 @@ impl LoxClass {
 
     pub fn append_setters(
         &self,
-        method_list: &[&Statement],
-        environments: Vec<Rc<RefCell<HashMap<String, Value>>>>,
+        method_list: &[&'a Statement<'a>],
+        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
     ) {
         let setters = statement_list_to_function_hash_map(method_list, &environments);
         self.setters.borrow_mut().extend(setters);
@@ -160,17 +161,17 @@ impl LoxClass {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct LoxObject {
-    properties: Rc<RefCell<HashMap<String, Value>>>,
-    getters: HashMap<String, LoxFunction>,
-    setters: HashMap<String, LoxFunction>,
-    pub superclass: Option<Box<LoxObject>>,
+pub struct LoxObject<'a> {
+    properties: Rc<RefCell<HashMap<String, Value<'a>>>>,
+    getters: HashMap<String, LoxFunction<'a>>,
+    setters: HashMap<String, LoxFunction<'a>>,
+    pub superclass: Option<Box<LoxObject<'a>>>,
     pub class_name: String,
     pub traits: HashSet<String>,
 }
 
-impl LoxObject {
-    pub fn new(class: LoxClass) -> LoxObject {
+impl<'a> LoxObject<'a> {
+    pub fn new(class: LoxClass<'a>) -> LoxObject<'a> {
         let properties = Rc::new(RefCell::new(HashMap::default()));
         let superclass = class
             .superclass
@@ -213,9 +214,9 @@ impl LoxObject {
 
     fn new_static(
         class_name: String,
-        methods: &[(String, LoxFunction)],
-        superclass: Option<LoxClass>,
-    ) -> LoxObject {
+        methods: &[(String, LoxFunction<'a>)],
+        superclass: Option<LoxClass<'a>>,
+    ) -> LoxObject<'a> {
         let properties = Rc::new(RefCell::new(HashMap::default()));
         for (name, function) in methods {
             properties
@@ -247,16 +248,15 @@ impl LoxObject {
 
     pub fn init(
         &self,
-        values: &[Value],
-        locals: &HashMap<usize, usize>,
-        imports: &HashMap<String, LoxModule>,
-        location: &SourceCodeLocation,
-    ) -> Result<(), ProgramError> {
+        values: &[Value<'a>],
+        interpreter: &'a Interpreter<'a>,
+        location: &SourceCodeLocation<'a>,
+    ) -> Result<(), ProgramError<'a>> {
         if let Some(s) = &self.superclass {
-            s.init(values, locals, imports, location)?;
+            s.init(values, interpreter, location)?;
         }
         if let Some(Value::Function(f)) = self.properties.borrow().get("init") {
-            f.eval(values, locals, imports)?;
+            f.eval(values, interpreter)?;
             Ok(())
         } else if values.len() != 0 {
             Err(ProgramError {
@@ -272,15 +272,15 @@ impl LoxObject {
         }
     }
 
-    pub fn get_setter(&self, name: &str) -> Option<LoxFunction> {
+    pub fn get_setter(&self, name: &str) -> Option<LoxFunction<'a>> {
         self.setters.get(name).cloned()
     }
 
-    pub fn get_getter(&self, name: &str) -> Option<LoxFunction> {
+    pub fn get_getter(&self, name: &str) -> Option<LoxFunction<'a>> {
         self.getters.get(name).cloned()
     }
 
-    pub fn get(&self, name: &str) -> Option<Value> {
+    pub fn get(&self, name: &str) -> Option<Value<'a>> {
         let v = self.properties.borrow().get(name).cloned();
         if v.is_some() {
             v
@@ -289,14 +289,14 @@ impl LoxObject {
         }
     }
 
-    pub fn set(&mut self, name: String, value: Value) {
+    pub fn set(&mut self, name: String, value: Value<'a>) {
         self.properties.borrow_mut().insert(name, value);
     }
 
     pub fn append_methods(
         &self,
-        method_list: &[&Statement],
-        environments: Vec<Rc<RefCell<HashMap<String, Value>>>>,
+        method_list: &[&'a Statement<'a>],
+        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
     ) {
         let mut methods = statement_list_to_function_hash_map(method_list, &environments);
         let mut variables = vec!["this"];

@@ -1,23 +1,17 @@
 use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType, Type, Pass};
 use std::collections::HashMap;
-use std::cell::RefCell;
-use std::rc::Rc;
 
-pub trait WithScopedVariables {
-    fn resolve_variable(&mut self, expression: &Expression, scope_id: usize);
-}
-
-pub struct Resolver<'a, T: WithScopedVariables> {
+pub struct Resolver<'a> {
     scopes: Vec<HashMap<String, bool>>,
     uses: Vec<HashMap<&'a str, usize>>,
-    locations: Vec<HashMap<&'a str, &'a SourceCodeLocation>>,
-    interpreter: Rc<RefCell<T>>,
+    locations: Vec<HashMap<&'a str, &'a SourceCodeLocation<'a>>>,
+    locals: HashMap<usize, usize>,
 }
 
-impl<'a, T: WithScopedVariables> Resolver<'a, T> {
-    pub fn new(interpreter: Rc<RefCell<T>>) -> Resolver<'a, T> {
+impl<'a> Resolver<'a> {
+    pub fn new() -> Resolver<'a> {
         Resolver {
-            interpreter,
+            locals: HashMap::default(),
             locations: vec![HashMap::default()],
             scopes: vec![HashMap::default()],
             uses: vec![HashMap::default()],
@@ -28,10 +22,15 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
         self.uses.push(HashMap::default());
         self.locations.push(HashMap::default());
     }
-    fn pop_scope(&mut self) -> Result<(), Vec<ProgramError>> {
+    fn dry_pop_scope(&mut self) {
+        self.scopes.pop();
+        self.uses.pop();
+        self.locations.pop();
+    }
+    fn pop_scope(&mut self) -> Result<(), Vec<ProgramError<'a>>> {
         self.scopes.pop();
         if let (Some(variables), Some(locations)) = (self.uses.pop(), self.locations.pop()) {
-            let errors: Vec<ProgramError> = variables
+            let errors: Vec<ProgramError<'a>> = variables
                 .iter()
                 .filter(|(_, uses)| **uses == 0)
                 .map(|p| ProgramError {
@@ -48,8 +47,8 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
     fn declare(
         &mut self,
         name: &'a str,
-        location: &'a SourceCodeLocation,
-    ) -> Result<(), ProgramError> {
+        location: &'a SourceCodeLocation<'a>,
+    ) -> Result<(), ProgramError<'a>> {
         if let Some(s) = self.scopes.last_mut() {
             if s.contains_key(name) {
                 return Err(ProgramError {
@@ -75,7 +74,7 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
             s.insert(name.to_owned(), true);
         }
     }
-    fn resolve_local(&mut self, expression: &Expression, name: &'a str) -> Result<(), ProgramError> {
+    fn resolve_local(&mut self, expression: &Expression<'a>, name: &'a str) -> Result<(), ProgramError<'a>> {
         if let Some((i, scope)) = self
             .scopes
             .iter()
@@ -91,15 +90,15 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
             }
             let new_uses = self.uses[i][name] + 1;
             self.uses[i].insert(name, new_uses);
-            self.interpreter.borrow_mut().resolve_variable(expression, i);
+            self.locals.insert(expression.id(), i);
         }
         Ok(())
     }
     fn resolve_functions(
         &mut self,
-        methods: &'a [Box<Statement>],
+        methods: &'a [Box<Statement<'a>>],
         check_defined: bool,
-    ) -> Result<(), Vec<ProgramError>> {
+    ) -> Result<(), Vec<ProgramError<'a>>> {
         methods
             .iter()
             .map(|s| {
@@ -114,15 +113,15 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
                 }
                 r
             })
-            .collect::<Result<_, Vec<ProgramError>>>()?;
+            .collect::<Result<_, Vec<ProgramError<'a>>>>()?;
         Ok(())
     }
     fn resolve_function<'b>(
         &mut self,
         arguments: &'a [String],
-        body: &'b [&'a Statement],
-        location: &'a SourceCodeLocation,
-    ) -> Result<(), Vec<ProgramError>> {
+        body: &'b [&'a Statement<'a>],
+        location: &'a SourceCodeLocation<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
         self.push_scope(HashMap::default());
         for arg in arguments {
             self.declare(arg, location).map_err(|e| vec![e])?;
@@ -137,15 +136,25 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
     fn define_and_use(
         &mut self,
         variable: &'a str,
-        location: &'a SourceCodeLocation,
-    ) -> Result<(), Vec<ProgramError>> {
+        location: &'a SourceCodeLocation<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
         self.declare(variable, location).map_err(|e| vec![e])?;
         self.define(variable);
         self.uses.last_mut().unwrap().insert(variable, 1);
         Ok(())
     }
-    fn resolve(&mut self, statement: &'a Statement) -> Result<(), Vec<ProgramError>> {
+    fn resolve(&mut self, statement: &'a Statement<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         match &statement.statement_type {
+            StatementType::Module { name, statements } => {
+                self.declare(name, &statement.location)
+                    .map_err(|e| vec![e])?;
+                self.define(name);
+                self.push_scope(HashMap::default());
+                statements.iter()
+                    .map(|s| self.resolve(&s))
+                    .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
+                self.dry_pop_scope();
+            }
             StatementType::Import { name } => {
                 self.declare(name, &statement.location)
                     .map_err(|e| vec![e])?;
@@ -163,7 +172,7 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
                     .map_err(|e| vec![e])?;
                 if let Some(e) = expression {
                     self.resolve_expression(e)?;
-                    self.define(&name);
+                    self.define(name);
                 }
             }
             StatementType::ClassDeclaration {
@@ -269,7 +278,7 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
         Ok(())
     }
 
-    fn resolve_expression(&mut self, expression: &'a Expression) -> Result<(), Vec<ProgramError>> {
+    fn resolve_expression(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         match &expression.expression_type {
             ExpressionType::IsType { value, checked_type } => {
                 self.resolve_expression(value)?;
@@ -359,11 +368,11 @@ impl<'a, T: WithScopedVariables> Resolver<'a, T> {
     }
 }
 
-impl<'a, T: WithScopedVariables> Pass<'a> for Resolver<'a, T> {
-    fn run(&mut self, ss: &'a [Statement]) -> Result<(), Vec<ProgramError>> {
+impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
+    fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<HashMap<usize, usize>, Vec<ProgramError<'a>>> {
         ss.iter()
             .map(|s| self.resolve(&s))
-            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
-        Ok(())
+            .collect::<Result<Vec<()>, Vec<ProgramError<'a>>>>()?;
+        Ok(self.locals.clone())
     }
 }

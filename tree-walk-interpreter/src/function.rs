@@ -1,28 +1,27 @@
 use crate::class::LoxObject;
-use crate::interpreter::Evaluable;
 use crate::state::State;
-use crate::value::{Value, LoxModule};
+use crate::value::Value;
 use parser::types::{ProgramError, SourceCodeLocation, Statement};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Error, Formatter};
 use std::rc::Rc;
+use crate::interpreter::Interpreter;
 
 #[derive(Clone, PartialEq)]
-pub struct LoxFunction {
+pub struct LoxFunction<'a> {
     pub arguments: Vec<String>,
-    pub environments: Vec<Rc<RefCell<HashMap<String, Value>>>>,
-    pub body: Vec<Statement>,
-    pub location: SourceCodeLocation,
+    pub environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+    pub body: Vec<&'a Statement<'a>>,
+    pub location: SourceCodeLocation<'a>,
 }
 
-impl LoxFunction {
+impl<'a> LoxFunction<'a> {
     pub fn eval(
         &self,
-        values: &[Value],
-        locals: &HashMap<usize, usize>,
-        imports: &HashMap<String, LoxModule>,
-    ) -> Result<Value, ProgramError> {
+        values: &[Value<'a>],
+        interpreter: &'a Interpreter<'a>,
+    ) -> Result<Value<'a>, ProgramError<'a>> {
         if self.arguments.len() != values.len() {
             return Err(ProgramError {
                 message: format!(
@@ -40,7 +39,7 @@ impl LoxFunction {
         }
         current_state.in_function = true;
         for st in self.body.iter() {
-            current_state = st.evaluate(current_state, locals, imports)?.0;
+            current_state = interpreter.evaluate(current_state, st)?.0;
             if let Some(return_value) = &current_state.return_value {
                 let value = (**return_value).clone();
                 return Ok(value);
@@ -49,7 +48,7 @@ impl LoxFunction {
         Ok(Value::Nil)
     }
 
-    pub(crate) fn bind(&mut self, instances: &[LoxObject], variables: &[&str]) {
+    pub(crate) fn bind(&mut self, instances: &[LoxObject<'a>], variables: &[&str]) {
         let mut new_scope = HashMap::default();
         for (variable, obj) in variables.into_iter().zip(instances.into_iter()) {
             new_scope.insert((*variable).to_owned(), Value::Object(obj.clone()));
@@ -58,7 +57,7 @@ impl LoxFunction {
     }
 }
 
-impl Debug for LoxFunction {
+impl<'a> Debug for LoxFunction<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         f.write_str(
             format!(

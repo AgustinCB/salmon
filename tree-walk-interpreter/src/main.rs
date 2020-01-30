@@ -5,13 +5,11 @@ use crate::interpreter::Interpreter;
 use parser::lexer::Lexer;
 use parser::parser::Parser;
 use parser::resolver::Resolver;
-use parser::types::{ProgramError, Pass, Statement};
+use parser::types::Pass;
 use std::io::{self, Read};
-use parser::importer::Importer;
-use std::cell::RefCell;
 use std::env;
-use std::rc::Rc;
 use std::env::Args;
+use std::process::exit;
 
 mod class;
 mod function;
@@ -49,34 +47,33 @@ fn main() -> io::Result<()> {
 
     handle.read_to_string(&mut buffer)?;
 
-    let mut lexer = Lexer::new(buffer, "stdin".to_owned());
+    let mut lexer = Lexer::new(buffer, "stdin");
     let result = lexer
         .parse()
         .and_then(|ts| {
             let parser = Parser::new(ts.into_iter().peekable());
             parser.parse()
-        })
-        .and_then(|ss| {
-            let interpreter = Rc::new(RefCell::new(Interpreter::new(ss)));
-            let ss = interpreter.borrow().content().to_vec();
-            run_passes(interpreter.clone(), &ss, &config)?;
-            Ok(interpreter)
-        })
-        .and_then(|interpreter| interpreter.borrow_mut().run().map_err(|e| vec![e]));
-    match result {
-        Ok(_) => {}
-        Err(es) => es.iter().for_each(|e| eprintln!("{}", e)),
-    }
-    Ok(())
-}
-
-fn run_passes(interpreter: Rc<RefCell<Interpreter>>, ss: &Vec<Statement>, config: &Config) -> Result<(), Vec<ProgramError>>{
-    let mut resolver = Resolver::new(interpreter.clone());
-    let mut importer = Importer::new(&config.paths, interpreter);
-    let passes: Vec<&mut dyn Pass> = vec![&mut importer, &mut resolver];
-    passes
-        .into_iter()
-        .map(|p| p.run(&ss))
-        .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
+        });
+    let ss = match result {
+        Ok(ss) => ss,
+        Err(es) => {
+            es.iter().for_each(|e| eprintln!("{}", e));
+            exit(1);
+        },
+    };
+    let mut interpreter = Interpreter::new(&config.paths, "");
+    let mut resolver = Resolver::new();
+    let locals = match resolver.run(&ss) {
+        Ok(l) => l,
+        Err(es) => {
+            es.iter().for_each(|e| eprintln!("{}", e));
+            exit(1);
+        },
+    };
+    interpreter.locals = locals;
+    if let Err(e) = interpreter.run(&ss) {
+        eprintln!("{}", e);
+        exit(1);
+    };
     Ok(())
 }

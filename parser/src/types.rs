@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Display, Error, Formatter};
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct SourceCodeLocation {
-    pub file: String,
+pub struct SourceCodeLocation<'a> {
+    pub file: &'a str,
     pub line: usize,
 }
 
@@ -78,24 +78,24 @@ pub enum TokenType {
     UppercaseTrait,
     Array,
     Module,
+    Mod,
     Identifier { name: String },
     TokenLiteral { value: Literal },
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Token {
+pub struct Token<'a> {
     pub token_type: TokenType,
-    pub lexeme: String,
-    pub location: SourceCodeLocation,
+    pub location: SourceCodeLocation<'a>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ProgramError {
-    pub location: SourceCodeLocation,
+pub struct ProgramError<'a> {
+    pub location: SourceCodeLocation<'a>,
     pub message: String,
 }
 
-impl Display for ProgramError {
+impl<'a> Display for ProgramError<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         f.write_str(
             format!(
@@ -110,13 +110,13 @@ impl Display for ProgramError {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Expression {
-    pub expression_type: ExpressionType,
-    pub location: SourceCodeLocation,
+pub struct Expression<'a> {
+    pub expression_type: ExpressionType<'a>,
+    pub location: SourceCodeLocation<'a>,
     id: usize,
 }
 
-impl Expression {
+impl<'a> Expression<'a> {
     pub fn id(&self) -> usize {
         self.id
     }
@@ -134,11 +134,11 @@ impl ExpressionFactory {
     pub fn new_starting(counter: usize) -> ExpressionFactory {
         ExpressionFactory { counter }
     }
-    pub fn new_expression(
+    pub fn new_expression<'a>(
         &mut self,
-        expression_type: ExpressionType,
-        location: SourceCodeLocation,
-    ) -> Expression {
+        expression_type: ExpressionType<'a>,
+        location: SourceCodeLocation<'a>,
+    ) -> Expression<'a> {
         let result = Expression {
             expression_type,
             location,
@@ -150,7 +150,7 @@ impl ExpressionFactory {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Type {
+pub enum Type<'a> {
     Nil,
     Boolean,
     Integer,
@@ -161,83 +161,83 @@ pub enum Type {
     Trait,
     Array,
     Module,
-    UserDefined(Box<Expression>),
+    UserDefined(Box<Expression<'a>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ExpressionType {
+pub enum ExpressionType<'a> {
     Conditional {
-        condition: Box<Expression>,
-        then_branch: Box<Expression>,
-        else_branch: Box<Expression>,
+        condition: Box<Expression<'a>>,
+        then_branch: Box<Expression<'a>>,
+        else_branch: Box<Expression<'a>>,
     },
     Binary {
-        right: Box<Expression>,
+        right: Box<Expression<'a>>,
         operator: TokenType,
-        left: Box<Expression>,
+        left: Box<Expression<'a>>,
     },
     Call {
-        callee: Box<Expression>,
-        arguments: Vec<Box<Expression>>,
+        callee: Box<Expression<'a>>,
+        arguments: Vec<Box<Expression<'a>>>,
     },
     Unary {
         operator: TokenType,
-        operand: Box<Expression>,
+        operand: Box<Expression<'a>>,
     },
     Grouping {
-        expression: Box<Expression>,
+        expression: Box<Expression<'a>>,
     },
     ExpressionLiteral {
         value: Literal,
     },
     ModuleLiteral {
         module: String,
-        field: Box<Expression>,
+        field: Box<Expression<'a>>,
     },
     VariableLiteral {
         identifier: String,
     },
     VariableAssignment {
         identifier: String,
-        expression: Box<Expression>,
+        expression: Box<Expression<'a>>,
     },
     AnonymousFunction {
         arguments: Vec<String>,
-        body: Vec<Statement>,
+        body: Vec<Statement<'a>>,
     },
     Get {
-        callee: Box<Expression>,
+        callee: Box<Expression<'a>>,
         property: String,
     },
     Set {
-        callee: Box<Expression>,
+        callee: Box<Expression<'a>>,
         property: String,
-        value: Box<Expression>,
+        value: Box<Expression<'a>>,
     },
     Array {
-        elements: Vec<Box<Expression>>,
+        elements: Vec<Box<Expression<'a>>>,
     },
     RepeatedElementArray {
-        element: Box<Expression>,
-        length: Box<Expression>,
+        element: Box<Expression<'a>>,
+        length: Box<Expression<'a>>,
     },
     ArrayElement {
-        array: Box<Expression>,
-        index: Box<Expression>,
+        array: Box<Expression<'a>>,
+        index: Box<Expression<'a>>,
     },
     ArrayElementSet {
-        array: Box<Expression>,
-        index: Box<Expression>,
-        value: Box<Expression>,
+        array: Box<Expression<'a>>,
+        index: Box<Expression<'a>>,
+        value: Box<Expression<'a>>,
     },
     IsType {
-        value: Box<Expression>,
-        checked_type: Type,
+        value: Box<Expression<'a>>,
+        checked_type: Type<'a>,
     },
 }
 
-impl Expression {
-    pub fn create_program_error(&self, message: &str) -> ProgramError {
+impl<'a> Expression<'a> {
+    pub fn create_program_error(&self, message: &str) -> ProgramError<'a> {
         ProgramError {
             location: self.location.clone(),
             message: message.to_owned(),
@@ -246,9 +246,9 @@ impl Expression {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Statement {
-    pub location: SourceCodeLocation,
-    pub statement_type: StatementType,
+pub struct Statement<'a> {
+    pub location: SourceCodeLocation<'a>,
+    pub statement_type: StatementType<'a>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -258,12 +258,16 @@ pub struct FunctionHeader {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum StatementType {
+pub enum StatementType<'a> {
+    Module {
+        name: String,
+        statements: Vec<Box<Statement<'a>>>,
+    },
     Expression {
-        expression: Expression,
+        expression: Expression<'a>,
     },
     PrintStatement {
-        expression: Expression,
+        expression: Expression<'a>,
     },
     TraitDeclaration {
         name: String,
@@ -273,44 +277,44 @@ pub enum StatementType {
         static_methods: Vec<FunctionHeader>,
     },
     TraitImplementation {
-        trait_name: Expression,
-        class_name: Expression,
-        methods: Vec<Box<Statement>>,
-        static_methods: Vec<Box<Statement>>,
-        getters: Vec<Box<Statement>>,
-        setters: Vec<Box<Statement>>,
+        trait_name: Expression<'a>,
+        class_name: Expression<'a>,
+        methods: Vec<Box<Statement<'a>>>,
+        static_methods: Vec<Box<Statement<'a>>>,
+        getters: Vec<Box<Statement<'a>>>,
+        setters: Vec<Box<Statement<'a>>>,
     },
     ClassDeclaration {
         name: String,
-        superclass: Option<Expression>,
-        methods: Vec<Box<Statement>>,
-        static_methods: Vec<Box<Statement>>,
-        getters: Vec<Box<Statement>>,
-        setters: Vec<Box<Statement>>,
+        superclass: Option<Expression<'a>>,
+        methods: Vec<Box<Statement<'a>>>,
+        static_methods: Vec<Box<Statement<'a>>>,
+        getters: Vec<Box<Statement<'a>>>,
+        setters: Vec<Box<Statement<'a>>>,
     },
     VariableDeclaration {
-        expression: Option<Expression>,
+        expression: Option<Expression<'a>>,
         name: String,
     },
     FunctionDeclaration {
         name: String,
         arguments: Vec<String>,
-        body: Vec<Box<Statement>>,
+        body: Vec<Box<Statement<'a>>>,
     },
     Block {
-        body: Vec<Box<Statement>>,
+        body: Vec<Box<Statement<'a>>>,
     },
     If {
-        condition: Expression,
-        then: Box<Statement>,
-        otherwise: Option<Box<Statement>>,
+        condition: Expression<'a>,
+        then: Box<Statement<'a>>,
+        otherwise: Option<Box<Statement<'a>>>,
     },
     While {
-        condition: Expression,
-        action: Box<Statement>,
+        condition: Expression<'a>,
+        action: Box<Statement<'a>>,
     },
     Return {
-        value: Option<Expression>,
+        value: Option<Expression<'a>>,
     },
     Import {
         name: String,
@@ -319,6 +323,15 @@ pub enum StatementType {
     EOF,
 }
 
-pub trait Pass<'a> {
-    fn run(&mut self, ss: &'a [Statement]) -> Result<(), Vec<ProgramError>>;
+impl<'a> Statement<'a> {
+    pub fn create_program_error(&self, message: &str) -> ProgramError<'a> {
+        ProgramError {
+            location: self.location.clone(),
+            message: message.to_owned(),
+        }
+    }
+}
+
+pub trait Pass<'a, R> {
+    fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<R, Vec<ProgramError<'a>>>;
 }

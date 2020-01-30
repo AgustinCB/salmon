@@ -1,10 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use parser::lexer::Lexer;
 use parser::parser::Parser;
-use parser::resolver::{Resolver, WithScopedVariables};
-use parser::types::{Pass, Expression};
-use std::rc::Rc;
-use std::cell::RefCell;
+use parser::resolver::Resolver;
+use parser::types::Pass;
 
 const PROGRAM: &str = "print \"HOLA\" and \"CHAU\";
 print nil and \"HOLA\";
@@ -467,28 +465,17 @@ while (counter1 < 5) {
 }
 print \"CHAU\";";
 
-struct Dummy {
-}
-
-impl WithScopedVariables for Dummy {
-    fn resolve_variable(&mut self, _expression: &Expression, _scope_id: usize) {
-
-    }
-}
-
 fn lex_and_parse(extra: usize) {
     let program = format!("{} + {};", extra, extra) + PROGRAM;
-    let mut lexer = Lexer::new(program, "stdin".to_owned());
-    lexer
+    let mut lexer = Lexer::new(program, "stdin");
+    let ss = lexer
         .parse()
         .and_then(|ts| {
             let parser = Parser::new(ts.into_iter().peekable());
             parser.parse()
-        })
-        .and_then(|ss| {
-            let mut resolver = Resolver::new(Rc::new(RefCell::new(Dummy {})));
-            resolver.run(&ss)
         }).unwrap();
+    let mut resolver = Resolver::new();
+    let _ = resolver.run(&ss).unwrap();
 }
 
 fn criterion_benchmark(c: &mut Criterion) {
