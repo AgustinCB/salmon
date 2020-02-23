@@ -133,6 +133,7 @@ pub struct Interpreter<'a> {
     blacklist: RefCell<Vec<&'a str>>,
     pub locals: HashMap<usize, usize>,
     modules: Cell<HashMap<&'a str, Vec<Box<Statement<'a>>>>>,
+    module_contents: Cell<HashMap<&'a str, String>>,
     paths: &'a [String],
 }
 
@@ -142,6 +143,7 @@ impl<'a> Interpreter<'a> {
             blacklist: RefCell::new(vec![file]),
             locals: HashMap::default(),
             modules: Cell::new(HashMap::default()),
+            module_contents: Cell::new(HashMap::default()),
             paths,
         }
     }
@@ -415,7 +417,7 @@ impl<'a> Interpreter<'a> {
                 name, statements
             } => {
                 unsafe { self.modules.as_ptr().as_mut() }.unwrap().insert(name.as_str(), statements.clone());
-                self.process_module2(state, name)?
+                self.process_module(state, name)?
             },
             StatementType::Import { name, } => {
                 let statements = self.resolve_import(name, &statement.location)?
@@ -423,7 +425,7 @@ impl<'a> Interpreter<'a> {
                     .map(Box::new)
                     .collect();
                 unsafe { self.modules.as_ptr().as_mut() }.unwrap().insert(name.as_str(), statements);
-                self.process_module2(state, name)?
+                self.process_module(state, name)?
             }
             StatementType::If {
                 condition,
@@ -640,6 +642,10 @@ impl<'a> Interpreter<'a> {
         Ok((state, Value::Nil))
     }
 
+    fn get_module_content(&'a self, name: &'a str) -> &'a str {
+        unsafe { self.module_contents.as_ptr().as_ref() }.unwrap().get(name).unwrap()
+    }
+
     fn get_module_statements(
         &'a self,
         name: &'a str,
@@ -678,7 +684,9 @@ impl<'a> Interpreter<'a> {
             });
         }
         let content = self.open_import(name, location)?;
-        let mut lexer = Lexer::new(content, name);
+        unsafe { self.module_contents.as_ptr().as_mut() }.unwrap()
+            .insert(name, content);
+        let mut lexer = Lexer::new(self.get_module_content(name), name);
         lexer.parse()
             .and_then(|tt| {
                 let parser = Parser::new(tt.into_iter().peekable());
@@ -687,7 +695,7 @@ impl<'a> Interpreter<'a> {
             .map_err(|ee| ee[0].clone())
     }
 
-    fn process_module2<'b>(
+    fn process_module<'b>(
         &'a self,
         mut state: State<'a>,
         name: &'a str,

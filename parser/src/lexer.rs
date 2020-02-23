@@ -5,15 +5,17 @@ pub struct Lexer<'a> {
     content: Vec<char>,
     current: usize,
     file: &'a str,
+    file_content: &'a str,
     line: usize,
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(s: String, file: &'a str) -> Lexer<'a> {
+    pub fn new(s: &'a str, file: &'a str) -> Lexer<'a> {
         Lexer {
             file,
             content: s.chars().collect(),
             current: 0,
+            file_content: s,
             line: 0,
         }
     }
@@ -74,7 +76,8 @@ impl<'a> Lexer<'a> {
                 }
                 ('<', _) => Some(self.create_token(TokenType::Less)),
                 ('\"', _) => {
-                    let string_content = self.take_while(|s| s != '\"');
+                    let init = self.current + 1;
+                    self.take_while(|s| s != '\"');
                     self.current += 1;
                     if self.current >= self.content.len() {
                         errors.push(self.create_error("Expected '\"', got end of string"));
@@ -82,19 +85,17 @@ impl<'a> Lexer<'a> {
                     } else {
                         Some(self.create_token(
                             TokenType::TokenLiteral {
-                                value: Literal::QuotedString(string_content),
+                                value: Literal::QuotedString(&self.file_content[init..self.current]),
                             },
                         ))
                     }
                 }
                 (d, _) if d.is_digit(10) => {
-                    let string_content = format!(
-                        "{}{}",
-                        d,
-                        self.take_while(|s| s.is_digit(10) || s == '.' || s.is_alphabetic()),
-                    );
+                    let init = self.current;
+                    self.take_while(|s| s.is_digit(10) || s == '.' || s.is_alphabetic());
+                    let string_content = &self.file_content[init..self.current+1];
                     if string_content.contains('.') {
-                        match f32::from_str(string_content.as_str()) {
+                        match f32::from_str(string_content) {
                             Ok(n) => Some(self.create_token(
                                 TokenType::TokenLiteral {
                                     value: Literal::Float(n),
@@ -109,7 +110,7 @@ impl<'a> Lexer<'a> {
                             }
                         }
                     } else {
-                        match i64::from_str(string_content.as_str()) {
+                        match i64::from_str(string_content) {
                             Ok(n) => Some(self.create_token(
                                 TokenType::TokenLiteral {
                                     value: Literal::Integer(n),
@@ -126,12 +127,10 @@ impl<'a> Lexer<'a> {
                     }
                 }
                 (c, _) if c.is_alphabetic() || c == '_' => {
-                    let string_content = format!(
-                        "{}{}",
-                        c,
-                        self.take_while(|s| s.is_digit(10) || s.is_alphabetic() || c == '_'),
-                    );
-                    match string_content.as_str() {
+                    let init = self.current;
+                    self.take_while(|s| s.is_digit(10) || s.is_alphabetic() || c == '_');
+                    let string_content = &self.file_content[init..self.current+1];
+                    match string_content {
                         "and" => Some(self.create_token(TokenType::And)),
                         "class" => Some(self.create_token(TokenType::Class)),
                         "else" => Some(self.create_token(TokenType::Else)),
@@ -213,7 +212,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn create_token(&self, token_type: TokenType) -> Token<'a> {
+    fn create_token(&self, token_type: TokenType<'a>) -> Token<'a> {
         Token {
             token_type,
             location: self.get_current_location(),
@@ -232,16 +231,13 @@ impl<'a> Lexer<'a> {
         self.content.get(index).cloned()
     }
 
-    fn take_while<F: Fn(char) -> bool>(&mut self, f: F) -> String {
-        let mut result = String::from("");
+    fn take_while<F: Fn(char) -> bool>(&mut self, f: F) {
         while let Some(next) = self.peek() {
             if !f(next) {
                 break;
             }
             self.current += 1;
-            result.push(next);
         }
-        result
     }
 }
 
@@ -256,7 +252,7 @@ mod tests {
             "var;while\n// comment\nidentifier\n\"string\"\n123.123\ntrue;false;nil;setter;getter;" +
             "trait[];import;::;123;=>;match;istype;Nil;Boolean;Integer;Float;String;Function;Class;" +
             "Array;Module;Trait;mod";
-        let mut lexer = Lexer::new(s.to_owned(), "file");
+    let mut lexer = Lexer::new(s.as_str(), "file");
         let expected = Ok(vec![
             Token {
                 token_type: TokenType::LeftParen,
@@ -596,7 +592,7 @@ mod tests {
             },
             Token {
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
                 location: SourceCodeLocation {
                     file: "file",
@@ -605,7 +601,7 @@ mod tests {
             },
             Token {
                 token_type: TokenType::TokenLiteral {
-                    value: Literal::QuotedString("string".to_owned()),
+                    value: Literal::QuotedString("string"),
                 },
                 location: SourceCodeLocation {
                     file: "file",
@@ -967,7 +963,7 @@ mod tests {
     #[test]
     fn test_lexer_with_unfinished_string() {
         let text = "var s = \"aasdfsadfsdfsadfasdfsdfaasdf";
-        let mut lexer = Lexer::new(text.to_owned(), "file");
+        let mut lexer = Lexer::new(text, "file");
         let expected = Err(vec![ProgramError {
             location: SourceCodeLocation {
                 file: "file",
@@ -981,7 +977,7 @@ mod tests {
     #[test]
     fn test_lexer_with_unexpected_character() {
         let text = "var s = 123;@";
-        let mut lexer = Lexer::new(text.to_owned(), "file");
+        let mut lexer = Lexer::new(text, "file");
         let expected = Err(vec![ProgramError {
             location: SourceCodeLocation {
                 file: "file",
@@ -995,7 +991,7 @@ mod tests {
     #[test]
     fn test_lexer_with_unparsable_number() {
         let text = "var s = 123a;";
-        let mut lexer = Lexer::new(text.to_owned(), "file");
+        let mut lexer = Lexer::new(text, "file");
         let expected = Err(vec![ProgramError {
             location: SourceCodeLocation {
                 file: "file",
@@ -1009,7 +1005,7 @@ mod tests {
     #[test]
     fn test_lexer_with_more_than_one_error() {
         let text = "var s = 123a;\nvar n = 123;@";
-        let mut lexer = Lexer::new(text.to_owned(), "file");
+        let mut lexer = Lexer::new(text, "file");
         let expected = Err(vec![
             ProgramError {
                 location: SourceCodeLocation {

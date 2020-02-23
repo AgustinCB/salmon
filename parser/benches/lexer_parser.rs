@@ -467,7 +467,7 @@ print \"CHAU\";";
 
 fn lex_and_parse(extra: usize) {
     let program = format!("{} + {};", extra, extra) + PROGRAM;
-    let mut lexer = Lexer::new(program, "stdin");
+    let mut lexer = Lexer::new(program.as_str(), "stdin");
     let ss = lexer
         .parse()
         .and_then(|ts| {

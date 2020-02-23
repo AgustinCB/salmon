@@ -165,13 +165,13 @@ impl<'a> TryInto<String> for Value<'a> {
     }
 }
 
-impl<'a> Into<Value<'a>> for &Literal {
+impl<'a> Into<Value<'a>> for &Literal<'a> {
     fn into(self) -> Value<'a> {
         match self {
             Literal::Float(value) => Value::Float { value: *value },
             Literal::Integer(value) => Value::Integer { value: *value as _ },
             Literal::QuotedString(value) => Value::String {
-                value: value.clone(),
+                value: (*value).to_owned(),
             },
             Literal::Keyword(DataKeyword::Nil) => Value::Nil,
             Literal::Keyword(DataKeyword::True) => Value::Boolean { value: true },

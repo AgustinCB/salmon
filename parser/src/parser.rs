@@ -260,9 +260,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }) = self.next()
         {
             if self.peek(TokenType::LeftBrace) {
-                self.parse_trait_declaration(name, &location)
+                self.parse_trait_declaration(name.to_owned(), &location)
             } else {
-                self.parse_trait_implementation(name, &location)
+                self.parse_trait_implementation(name.to_owned(), &location)
             }
         } else {
             Err(ProgramError {
@@ -283,7 +283,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             token_type: TokenType::Identifier { name },
             location,
         }) = self.next() {
-            self.parse_variable_or_module_access(name, &location)
+            self.parse_variable_or_module_access(name.to_owned(), &location)
         } else {
             Err(ProgramError {
                 location: location.clone(),
@@ -367,7 +367,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             let superclass = if self.peek(TokenType::Less) {
                 self.next();
                 if let Some(TokenType::Identifier { name }) = self.next().map(|t| t.token_type) {
-                    Some(self.parse_variable_or_module_access(name, &location)?)
+                    Some(self.parse_variable_or_module_access(name.to_owned(), &location)?)
                 } else {
                     return Err(ProgramError {
                         message: "Expect superclass name.".to_owned(),
@@ -392,7 +392,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             Ok(Statement {
                 statement_type: StatementType::ClassDeclaration {
                     getters: method_set.getters,
-                    name,
+                    name: name.to_owned(),
                     methods: method_set.methods,
                     setters: method_set.setters,
                     static_methods: method_set.static_methods,
@@ -524,7 +524,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             })
     }
 
-    fn build_if_literal_chain(&self, branches: Vec<(Literal, Statement<'a>)>, match_all: Statement<'a>) -> Statement<'a> {
+    fn build_if_literal_chain(&self, branches: Vec<(Literal<'a>, Statement<'a>)>, match_all: Statement<'a>) -> Statement<'a> {
         branches.into_iter()
             .fold(match_all, |acc, (value, s)| {
                 let left = Box::new(self.expression_factory.borrow_mut().new_expression(
@@ -557,7 +557,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
 
     fn parse_match_branches(
         &self, location: &SourceCodeLocation<'a>
-    ) -> Result<(Vec<(Literal, Statement<'a>)>, Vec<(Type<'a>, Statement<'a>)>), ProgramError<'a>> {
+    ) -> Result<(Vec<(Literal<'a>, Statement<'a>)>, Vec<(Type<'a>, Statement<'a>)>), ProgramError<'a>> {
         let mut branches = vec![];
         let mut types = vec![];
         while !self.peek(TokenType::Star) && !self.peek(TokenType::RightBrace) {
@@ -598,7 +598,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     parse_branch!(self, types, location, Type::Trait, next_location);
                 }
                 Some(TokenType::Identifier { name }) => {
-                    let obj = Box::new(self.parse_variable_or_module_access(name, location)?);
+                    let obj = Box::new(self.parse_variable_or_module_access(name.to_owned(), location)?);
                     parse_branch!(self, types, location, Type::UserDefined(obj), next_location);
                 }
                 _ => return Err(ProgramError {
@@ -674,7 +674,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 }) => Ok(Statement {
                     location: location.clone(),
                     statement_type: StatementType::VariableDeclaration {
-                        name,
+                        name: name.to_owned(),
                         expression: None,
                     },
                 }),
@@ -686,7 +686,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     self.consume(TokenType::Semicolon, "Expected semicolon", location)?;
                     Ok(Statement {
                         location: location.clone(),
-                        statement_type: StatementType::VariableDeclaration { name, expression },
+                        statement_type: StatementType::VariableDeclaration { name: name.to_owned(), expression },
                     })
                 }
                 _ => Err(ProgramError {
@@ -774,7 +774,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 "Expected a parenthesis after parameters!",
                 &location,
             )?;
-            Ok((name, arguments))
+            Ok((name.to_owned(), arguments))
         } else {
             Err(ProgramError {
                 location: location.clone(),
@@ -1130,7 +1130,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 token_type: TokenType::Identifier { name }, location, ..
             }) => {
                 Ok(Type::UserDefined(Box::new(
-                    self.parse_variable_or_module_access(name, &location)?
+                    self.parse_variable_or_module_access(name.to_owned(), &location)?
                 )))
             }
             _ => Err(ProgramError {
@@ -1231,7 +1231,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             Some(Token {
                 token_type: TokenType::Identifier { name },
                 ..
-            }) => Ok(name),
+            }) => Ok(name.to_owned()),
             Some(Token { location, token_type, .. }) => Err(ProgramError {
                 location,
                 message: format!("Expected identifier! Got {:?}", token_type),
@@ -1283,7 +1283,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             Some(Token {
                 token_type: TokenType::Identifier { name },
                 location,
-            }) => self.parse_variable_or_module_access(name, &location),
+            }) => self.parse_variable_or_module_access(name.to_owned(), &location),
             Some(Token {
                 token_type: TokenType::LeftParen,
                 location,
@@ -1581,7 +1581,7 @@ mod test {
         let input = vec![Token {
             location: location.clone(),
             token_type: TokenType::Identifier {
-                name: "identifier".to_string(),
+                name: "identifier",
             },
         }];
         let parser = Parser::new(input.into_iter().peekable());
@@ -1612,7 +1612,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1654,7 +1654,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
         ];
@@ -1678,7 +1678,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1702,7 +1702,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1745,7 +1745,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1755,7 +1755,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1800,7 +1800,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1810,7 +1810,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1820,7 +1820,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1944,7 +1944,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -1954,7 +1954,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier1".to_string(),
+                    name: "identifier1",
                 },
             },
             Token {
@@ -1964,7 +1964,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier2".to_string(),
+                    name: "identifier2",
                 },
             },
         ];
@@ -2012,7 +2012,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_string(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -2213,7 +2213,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -2250,7 +2250,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -2302,7 +2302,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -2376,7 +2376,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -2386,7 +2386,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "argument".to_owned(),
+                    name: "argument",
                 },
             },
             Token {
@@ -2400,7 +2400,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -2480,7 +2480,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "argument".to_owned(),
+                    name: "argument",
                 },
             },
             Token {
@@ -2494,7 +2494,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -2588,7 +2588,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
             },
             Token {
@@ -2598,7 +2598,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "argument".to_owned(),
+                    name: "argument",
                 },
             },
             Token {
@@ -2608,7 +2608,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "argument".to_owned(),
+                    name: "argument",
                 },
             },
             Token {
@@ -2622,7 +2622,7 @@ mod test {
             Token {
                 location: location.clone(),
                 token_type: TokenType::Identifier {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                 },
             },
             Token {

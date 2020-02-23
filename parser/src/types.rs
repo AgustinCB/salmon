@@ -14,15 +14,15 @@ pub enum DataKeyword {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Literal {
-    QuotedString(String),
+pub enum Literal<'a> {
+    QuotedString(&'a str),
     Keyword(DataKeyword),
     Float(f32),
     Integer(i64),
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum TokenType {
+pub enum TokenType<'a> {
     LeftParen,
     RightParen,
     LeftBrace,
@@ -79,13 +79,13 @@ pub enum TokenType {
     Array,
     Module,
     Mod,
-    Identifier { name: String },
-    TokenLiteral { value: Literal },
+    Identifier { name: &'a str },
+    TokenLiteral { value: Literal<'a> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token<'a> {
-    pub token_type: TokenType,
+    pub token_type: TokenType<'a>,
     pub location: SourceCodeLocation<'a>,
 }
 
@@ -173,7 +173,7 @@ pub enum ExpressionType<'a> {
     },
     Binary {
         right: Box<Expression<'a>>,
-        operator: TokenType,
+        operator: TokenType<'a>,
         left: Box<Expression<'a>>,
     },
     Call {
@@ -181,14 +181,14 @@ pub enum ExpressionType<'a> {
         arguments: Vec<Box<Expression<'a>>>,
     },
     Unary {
-        operator: TokenType,
+        operator: TokenType<'a>,
         operand: Box<Expression<'a>>,
     },
     Grouping {
         expression: Box<Expression<'a>>,
     },
     ExpressionLiteral {
-        value: Literal,
+        value: Literal<'a>,
     },
     ModuleLiteral {
         module: String,

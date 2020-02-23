@@ -47,7 +47,7 @@ fn main() -> io::Result<()> {
 
     handle.read_to_string(&mut buffer)?;
 
-    let mut lexer = Lexer::new(buffer, "stdin");
+    let mut lexer = Lexer::new(buffer.as_str(), "stdin");
     let result = lexer
         .parse()
         .and_then(|ts| {
