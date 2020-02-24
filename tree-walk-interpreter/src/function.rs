@@ -10,8 +10,8 @@ use crate::interpreter::Interpreter;
 
 #[derive(Clone, PartialEq)]
 pub struct LoxFunction<'a> {
-    pub arguments: Vec<String>,
-    pub environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+    pub arguments: Vec<&'a str>,
+    pub environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     pub body: Vec<&'a Statement<'a>>,
     pub location: SourceCodeLocation<'a>,
 }
@@ -48,10 +48,10 @@ impl<'a> LoxFunction<'a> {
         Ok(Value::Nil)
     }
 
-    pub(crate) fn bind(&mut self, instances: &[LoxObject<'a>], variables: &[&str]) {
+    pub(crate) fn bind(&mut self, instances: &[LoxObject<'a>], variables: &[&'a str]) {
         let mut new_scope = HashMap::default();
         for (variable, obj) in variables.into_iter().zip(instances.into_iter()) {
-            new_scope.insert((*variable).to_owned(), Value::Object(obj.clone()));
+            new_scope.insert(*variable, Value::Object(obj.clone()));
         }
         self.environments.push(Rc::new(RefCell::new(new_scope)));
     }

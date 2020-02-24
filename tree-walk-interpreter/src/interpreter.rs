@@ -52,7 +52,7 @@ fn comparison_operation<'a>(l: Value<'a>, r: Value<'a>, op: fn(f32, f32) -> bool
     })
 }
 
-fn statements_to_hash_set(statements: &[&Statement]) -> HashSet<FunctionHeader> {
+fn statements_to_hash_set<'a>(statements: &[&Statement<'a>]) -> HashSet<FunctionHeader<'a>> {
     let mut map = HashSet::new();
     for s in statements {
         if let StatementType::FunctionDeclaration {
@@ -416,7 +416,7 @@ impl<'a> Interpreter<'a> {
             StatementType::Module {
                 name, statements
             } => {
-                unsafe { self.modules.as_ptr().as_mut() }.unwrap().insert(name.as_str(), statements.clone());
+                unsafe { self.modules.as_ptr().as_mut() }.unwrap().insert(*name, statements.clone());
                 self.process_module(state, name)?
             },
             StatementType::Import { name, } => {
@@ -424,7 +424,7 @@ impl<'a> Interpreter<'a> {
                     .into_iter()
                     .map(Box::new)
                     .collect();
-                unsafe { self.modules.as_ptr().as_mut() }.unwrap().insert(name.as_str(), statements);
+                unsafe { self.modules.as_ptr().as_mut() }.unwrap().insert(*name, statements);
                 self.process_module(state, name)?
             }
             StatementType::If {
@@ -478,7 +478,7 @@ impl<'a> Interpreter<'a> {
                 state.insert_top(
                     name.clone(),
                     Value::Trait {
-                        name: name.clone(),
+                        name,
                         methods: methods.clone(),
                         static_methods: static_methods.clone(),
                         setters: setters.clone(),
@@ -707,7 +707,7 @@ impl<'a> Interpreter<'a> {
                 Ok(self.evaluate(state, statement)?.0)
             })?;
         self.blacklist.borrow_mut().pop();
-        state.insert_top(name.to_owned(), Value::Module(LoxModule {
+        state.insert_top(name, Value::Module(LoxModule {
             state: module_state,
         }));
         Ok(state)
@@ -716,7 +716,7 @@ impl<'a> Interpreter<'a> {
     fn variable_assignment(
         &'a self,
         state: State<'a>,
-        name: &str,
+        name: &'a str,
         id: usize,
         expression: &'a Expression<'a>,
         location: &SourceCodeLocation<'a>,
@@ -910,7 +910,7 @@ impl<'a> Interpreter<'a> {
         &'a self,
         state: State<'a>,
         callee: &'a Expression<'a>,
-        property: &String,
+        property: &'a str,
     ) -> EvaluationResult<'a> {
         let (next_state, object) = self.evaluate_expression(state, callee)?;
         match object {
@@ -942,7 +942,7 @@ impl<'a> Interpreter<'a> {
         &'a self,
         state: State<'a>,
         callee: &'a Expression<'a>,
-        property: &String,
+        property: &'a str,
         value: &'a Expression<'a>,
     ) -> EvaluationResult<'a> {
         let (ts, object) = self.evaluate_expression(state, callee)?;
@@ -1094,10 +1094,10 @@ mod common_test {
         factory.new_expression(expression_type, location)
     }
 
-    pub fn get_variable<'a>(s: &str, location: &SourceCodeLocation<'a>) -> Expression<'a> {
+    pub fn get_variable<'a>(s: &'a str, location: &SourceCodeLocation<'a>) -> Expression<'a> {
         create_expression(
             ExpressionType::VariableLiteral {
-                identifier: s.to_owned(),
+                identifier: s,
             },
             location.clone(),
         )
@@ -1145,7 +1145,7 @@ mod test_statement {
             location,
         };
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Float { value: 2.0 });
+        state.insert("identifier", Value::Float { value: 2.0 });
         let (s, _) = interpreter.evaluate(state, &statement).unwrap();
         assert_eq!(s.find("identifier"), Some(Value::Float { value: 1.0 }));
     }
@@ -1177,7 +1177,7 @@ mod test_statement {
             location,
         };
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Float { value: 2.0 });
+        state.insert("identifier", Value::Float { value: 2.0 });
         let (s, _) = interpreter.evaluate(state, &statement).unwrap();
         assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
     }
@@ -1194,7 +1194,7 @@ mod test_statement {
         interpreter.locals = locals;
         let statement = create_variable_assignment_statement("identifier", 0.0, &location);
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Float { value: 2.0 });
+        state.insert("identifier", Value::Float { value: 2.0 });
         let (s, _) = interpreter.evaluate(state, &statement).unwrap();
         assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
     }
@@ -1232,9 +1232,9 @@ mod test_statement {
             location,
         };
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Float { value: 2.0 });
-        state.insert("identifier1".to_owned(), Value::Float { value: 2.0 });
-        state.insert("identifier2".to_owned(), Value::Float { value: 0.0 });
+        state.insert("identifier", Value::Float { value: 2.0 });
+        state.insert("identifier1", Value::Float { value: 2.0 });
+        state.insert("identifier2", Value::Float { value: 0.0 });
         let (s, _) = interpreter.evaluate(state, &statement).unwrap();
         assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
         assert_eq!(s.find("identifier1"), Some(Value::Float { value: 1.0 }));
@@ -1251,7 +1251,7 @@ mod test_statement {
         let statement = Statement {
             statement_type: StatementType::VariableDeclaration {
                 expression: Some(create_expression_number(1.0, &location)),
-                name: "identifier".to_string(),
+                name: "identifier",
             },
             location,
         };
@@ -1269,7 +1269,7 @@ mod test_statement {
         let interpreter = Interpreter::new(&[], "");
         let statement = Statement {
             statement_type: StatementType::FunctionDeclaration {
-                name: "function".to_string(),
+                name: "function",
                 arguments: vec![],
                 body: vec![Box::new(Statement {
                     statement_type: StatementType::EOF,
@@ -1291,7 +1291,7 @@ mod test_statement {
                 assert_eq!(arguments, Vec::<String>::new());
                 assert_eq!(
                     body,
-                    vec![Statement {
+                    vec![&Statement {
                         statement_type: StatementType::EOF,
                         location: location.clone(),
                     }]
@@ -1410,7 +1410,7 @@ mod test_statement {
                     statement_type: StatementType::Expression {
                         expression: create_expression(
                             ExpressionType::VariableAssignment {
-                                identifier: "identifier".to_owned(),
+                                identifier: "identifier",
                                 expression: Box::new(create_expression(
                                     ExpressionType::Binary {
                                         operator: TokenType::Plus,
@@ -1429,13 +1429,13 @@ mod test_statement {
             location,
         };
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Float { value: 0.0 });
+        state.insert("identifier", Value::Float { value: 0.0 });
         let (s, _) = interpreter.evaluate(state, &statement).unwrap();
         assert_eq!(s.find("identifier"), Some(Value::Float { value: 10.0 }));
     }
 
     fn create_variable_assignment_statement<'a>(
-        id: &str,
+        id: &'a str,
         value: f32,
         location: &SourceCodeLocation<'a>,
     ) -> Statement<'a> {
@@ -1443,7 +1443,7 @@ mod test_statement {
             statement_type: StatementType::Expression {
                 expression: create_expression(
                     ExpressionType::VariableAssignment {
-                        identifier: id.to_owned(),
+                        identifier: id,
                         expression: Box::new(create_expression_number(value, location)),
                     },
                     location.clone(),
@@ -1484,7 +1484,8 @@ mod test_expression {
         };
         let state = State::default();
         let interpreter = Interpreter::new(&[], "");
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &get_number(1.0, &location))
+        let e = get_number(1.0, &location);
+        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &e)
             .unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Float { value: 1.0 });
@@ -1499,7 +1500,7 @@ mod test_expression {
         let expression = get_variable("variable", &location);
         let mut state = State::default();
         let interpreter = Interpreter::new(&[], "");
-        state.insert("variable".to_owned(), Value::Float { value: 1.0 });
+        state.insert("variable", Value::Float { value: 1.0 });
         let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Float { value: 1.0 });
@@ -1938,15 +1939,15 @@ mod test_expression {
         interpreter.locals = locals;
         let expression = create_expression(
             ExpressionType::VariableAssignment {
-                identifier: "identifier".to_owned(),
+                identifier: "identifier",
                 expression: Box::new(get_number(1.0, &location)),
             },
             location,
         );
         let mut state = State::default();
-        state.insert("identifier".to_owned(), Value::Float { value: 0.0 });
+        state.insert("identifier", Value::Float { value: 0.0 });
         let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        state.insert("identifier".to_owned(), Value::Float { value: 1.0 });
+        state.insert("identifier", Value::Float { value: 1.0 });
         assert_eq!(state, final_state);
         assert_eq!(got, Value::Float { value: 1.0 });
     }
@@ -1966,19 +1967,20 @@ mod test_expression {
         );
         let mut state = State::default();
         let interpreter = Interpreter::new(&[], "");
-        state.insert("identifier".to_owned(), Value::Float { value: 0.0 });
+        let s = Statement {
+            statement_type: StatementType::VariableDeclaration {
+                expression: Some(get_number(1.0, &location)),
+                name: "identifier",
+            },
+            location: location.clone(),
+        };
+        state.insert("identifier", Value::Float { value: 0.0 });
         state.insert(
-            "function".to_owned(),
+            "function",
             Value::Function(LoxFunction {
                 arguments: vec![],
                 environments: state.get_environments(),
-                body: vec![&Statement {
-                    statement_type: StatementType::VariableDeclaration {
-                        expression: Some(get_number(1.0, &location)),
-                        name: "identifier".to_owned(),
-                    },
-                    location: location.clone(),
-                }],
+                body: vec![&s],
                 location,
             }),
         );
@@ -1989,10 +1991,10 @@ mod test_expression {
         assert_eq!(got, Value::Nil);
     }
 
-    fn get_string<'a>(s: &str, location: &SourceCodeLocation<'a>) -> Expression<'a> {
+    fn get_string<'a>(s: &'a str, location: &SourceCodeLocation<'a>) -> Expression<'a> {
         create_expression(
             ExpressionType::ExpressionLiteral {
-                value: Literal::QuotedString(s.to_owned()),
+                value: Literal::QuotedString(s),
             },
             location.clone(),
         )

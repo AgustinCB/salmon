@@ -191,27 +191,27 @@ pub enum ExpressionType<'a> {
         value: Literal<'a>,
     },
     ModuleLiteral {
-        module: String,
+        module: &'a str,
         field: Box<Expression<'a>>,
     },
     VariableLiteral {
-        identifier: String,
+        identifier: &'a str,
     },
     VariableAssignment {
-        identifier: String,
+        identifier: &'a str,
         expression: Box<Expression<'a>>,
     },
     AnonymousFunction {
-        arguments: Vec<String>,
+        arguments: Vec<&'a str>,
         body: Vec<Statement<'a>>,
     },
     Get {
         callee: Box<Expression<'a>>,
-        property: String,
+        property: &'a str,
     },
     Set {
         callee: Box<Expression<'a>>,
-        property: String,
+        property: &'a str,
         value: Box<Expression<'a>>,
     },
     Array {
@@ -252,15 +252,15 @@ pub struct Statement<'a> {
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct FunctionHeader {
-    pub name: String,
+pub struct FunctionHeader<'a> {
+    pub name: &'a str,
     pub arity: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum StatementType<'a> {
     Module {
-        name: String,
+        name: &'a str,
         statements: Vec<Box<Statement<'a>>>,
     },
     Expression {
@@ -270,11 +270,11 @@ pub enum StatementType<'a> {
         expression: Expression<'a>,
     },
     TraitDeclaration {
-        name: String,
-        methods: Vec<FunctionHeader>,
-        getters: Vec<FunctionHeader>,
-        setters: Vec<FunctionHeader>,
-        static_methods: Vec<FunctionHeader>,
+        name: &'a str,
+        methods: Vec<FunctionHeader<'a>>,
+        getters: Vec<FunctionHeader<'a>>,
+        setters: Vec<FunctionHeader<'a>>,
+        static_methods: Vec<FunctionHeader<'a>>,
     },
     TraitImplementation {
         trait_name: Expression<'a>,
@@ -285,7 +285,7 @@ pub enum StatementType<'a> {
         setters: Vec<Box<Statement<'a>>>,
     },
     ClassDeclaration {
-        name: String,
+        name: &'a str,
         superclass: Option<Expression<'a>>,
         methods: Vec<Box<Statement<'a>>>,
         static_methods: Vec<Box<Statement<'a>>>,
@@ -294,11 +294,11 @@ pub enum StatementType<'a> {
     },
     VariableDeclaration {
         expression: Option<Expression<'a>>,
-        name: String,
+        name: &'a str,
     },
     FunctionDeclaration {
-        name: String,
-        arguments: Vec<String>,
+        name: &'a str,
+        arguments: Vec<&'a str>,
         body: Vec<Box<Statement<'a>>>,
     },
     Block {
@@ -317,7 +317,7 @@ pub enum StatementType<'a> {
         value: Option<Expression<'a>>,
     },
     Import {
-        name: String,
+        name: &'a str,
     },
     Break,
     EOF,

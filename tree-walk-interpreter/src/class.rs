@@ -7,10 +7,10 @@ use std::rc::Rc;
 use crate::interpreter::Interpreter;
 
 fn function_declaration_to_lox_funxtion<'a>(
-    arguments: &[String],
+    arguments: &[&'a str],
     body: Vec<&'a Statement<'a>>,
     location: &SourceCodeLocation<'a>,
-    environments: &[Rc<RefCell<HashMap<String, Value<'a>>>>],
+    environments: &[Rc<RefCell<HashMap<&'a str, Value<'a>>>>],
 ) -> LoxFunction<'a> {
     LoxFunction {
         arguments: arguments.to_vec(),
@@ -22,8 +22,8 @@ fn function_declaration_to_lox_funxtion<'a>(
 
 fn statement_list_to_function_hash_map<'a>(
     statements: &[&'a Statement<'a>],
-    environments: &[Rc<RefCell<HashMap<String, Value<'a>>>>],
-) -> HashMap<String, LoxFunction<'a>> {
+    environments: &[Rc<RefCell<HashMap<&'a str, Value<'a>>>>],
+) -> HashMap<&'a str, LoxFunction<'a>> {
     let mut functions = HashMap::default();
     for s in statements {
         match &s.statement_type {
@@ -50,24 +50,24 @@ fn statement_list_to_function_hash_map<'a>(
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoxClass<'a> {
-    methods: Rc<RefCell<HashMap<String, LoxFunction<'a>>>>,
-    getters: Rc<RefCell<HashMap<String, LoxFunction<'a>>>>,
-    setters: Rc<RefCell<HashMap<String, LoxFunction<'a>>>>,
-    traits: Rc<RefCell<HashSet<String>>>,
+    methods: Rc<RefCell<HashMap<&'a str, LoxFunction<'a>>>>,
+    getters: Rc<RefCell<HashMap<&'a str, LoxFunction<'a>>>>,
+    setters: Rc<RefCell<HashMap<&'a str, LoxFunction<'a>>>>,
+    traits: Rc<RefCell<HashSet<&'a str>>>,
     pub superclass: Option<Box<LoxClass<'a>>>,
-    pub name: String,
+    pub name: &'a str,
     pub static_instance: LoxObject<'a>,
 }
 
 impl<'a> LoxClass<'a> {
     pub fn new(
-        name: String,
+        name: &'a str,
         static_method_list: &[&'a Statement<'a>],
         method_list: &[&'a Statement<'a>],
         getters: &[&'a Statement<'a>],
         setters: &[&'a Statement<'a>],
         superclass: Option<LoxClass<'a>>,
-        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) -> LoxClass<'a> {
         let methods = Rc::new(RefCell::new(statement_list_to_function_hash_map(
             method_list,
@@ -103,7 +103,7 @@ impl<'a> LoxClass<'a> {
             }
         }
         let static_instance =
-            LoxObject::new_static(name.clone(), &static_methods, superclass.clone());
+            LoxObject::new_static(name, &static_methods, superclass.clone());
         LoxClass {
             getters,
             methods,
@@ -115,7 +115,7 @@ impl<'a> LoxClass<'a> {
         }
     }
 
-    pub fn append_trait(&self, trait_name: String) {
+    pub fn append_trait(&self, trait_name: &'a str) {
         self.traits.borrow_mut().insert(trait_name);
     }
 
@@ -126,7 +126,7 @@ impl<'a> LoxClass<'a> {
     pub fn append_methods(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
         let methods = statement_list_to_function_hash_map(method_list, &environments);
         self.methods.borrow_mut().extend(methods);
@@ -135,7 +135,7 @@ impl<'a> LoxClass<'a> {
     pub fn append_static_methods(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
         self.static_instance
             .append_methods(method_list, environments);
@@ -144,7 +144,7 @@ impl<'a> LoxClass<'a> {
     pub fn append_getters(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
         let getters = statement_list_to_function_hash_map(method_list, &environments);
         self.getters.borrow_mut().extend(getters);
@@ -153,7 +153,7 @@ impl<'a> LoxClass<'a> {
     pub fn append_setters(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
         let setters = statement_list_to_function_hash_map(method_list, &environments);
         self.setters.borrow_mut().extend(setters);
@@ -162,12 +162,12 @@ impl<'a> LoxClass<'a> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoxObject<'a> {
-    properties: Rc<RefCell<HashMap<String, Value<'a>>>>,
-    getters: HashMap<String, LoxFunction<'a>>,
-    setters: HashMap<String, LoxFunction<'a>>,
+    properties: Rc<RefCell<HashMap<&'a str, Value<'a>>>>,
+    getters: HashMap<&'a str, LoxFunction<'a>>,
+    setters: HashMap<&'a str, LoxFunction<'a>>,
     pub superclass: Option<Box<LoxObject<'a>>>,
-    pub class_name: String,
-    pub traits: HashSet<String>,
+    pub class_name: &'a str,
+    pub traits: HashSet<&'a str>,
 }
 
 impl<'a> LoxObject<'a> {
@@ -213,8 +213,8 @@ impl<'a> LoxObject<'a> {
     }
 
     fn new_static(
-        class_name: String,
-        methods: &[(String, LoxFunction<'a>)],
+        class_name: &'a str,
+        methods: &[(&'a str, LoxFunction<'a>)],
         superclass: Option<LoxClass<'a>>,
     ) -> LoxObject<'a> {
         let properties = Rc::new(RefCell::new(HashMap::default()));
@@ -231,7 +231,7 @@ impl<'a> LoxObject<'a> {
                         .borrow()
                         .clone()
                         .into_iter()
-                        .collect::<Vec<(String, LoxFunction)>>(),
+                        .collect::<Vec<(&'a str, LoxFunction)>>(),
                     c.superclass.map(|c| *c),
                 )
             })
@@ -289,14 +289,14 @@ impl<'a> LoxObject<'a> {
         }
     }
 
-    pub fn set(&mut self, name: String, value: Value<'a>) {
+    pub fn set(&mut self, name: &'a str, value: Value<'a>) {
         self.properties.borrow_mut().insert(name, value);
     }
 
     pub fn append_methods(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
         let mut methods = statement_list_to_function_hash_map(method_list, &environments);
         let mut variables = vec!["this"];

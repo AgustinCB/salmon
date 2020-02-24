@@ -33,11 +33,11 @@ pub enum Value<'a> {
     Class(LoxClass<'a>),
     Object(LoxObject<'a>),
     Trait {
-        name: String,
-        methods: Vec<FunctionHeader>,
-        getters: Vec<FunctionHeader>,
-        setters: Vec<FunctionHeader>,
-        static_methods: Vec<FunctionHeader>,
+        name: &'a str,
+        methods: Vec<FunctionHeader<'a>>,
+        getters: Vec<FunctionHeader<'a>>,
+        setters: Vec<FunctionHeader<'a>>,
+        static_methods: Vec<FunctionHeader<'a>>,
     },
     Array {
         capacity: usize,

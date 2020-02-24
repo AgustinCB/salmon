@@ -9,11 +9,11 @@ pub struct State<'a> {
     pub broke_loop: bool,
     pub loop_count: usize,
     pub in_function: bool,
-    environments: Vec<Rc<RefCell<HashMap<String, Value<'a>>>>>,
+    environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
 }
 
 impl<'a> State<'a> {
-    pub fn new(environments: &[Rc<RefCell<HashMap<String, Value<'a>>>>]) -> State<'a> {
+    pub fn new(environments: &[Rc<RefCell<HashMap<&'a str, Value<'a>>>>]) -> State<'a> {
         if environments.is_empty() {
             panic!("Environments can't be empty");
         }
@@ -26,9 +26,9 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn assign_at(&self, id: usize, identifier: &str, value: &Value<'a>) {
+    pub fn assign_at(&self, id: usize, identifier: &'a str, value: &Value<'a>) {
         self.environments.get(id).iter().for_each(|e| {
-            e.borrow_mut().insert(identifier.to_owned(), value.clone());
+            e.borrow_mut().insert(identifier, value.clone());
         });
     }
 
@@ -55,11 +55,11 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn insert_top(&mut self, identifier: String, value: Value<'a>) {
+    pub fn insert_top(&mut self, identifier: &'a str, value: Value<'a>) {
         self.last().borrow_mut().insert(identifier, value);
     }
 
-    pub fn insert(&mut self, identifier: String, value: Value<'a>) {
+    pub fn insert(&mut self, identifier: &'a str, value: Value<'a>) {
         for env in self.environments.iter().rev() {
             if env.borrow().contains_key(&identifier) {
                 env.borrow_mut().insert(identifier, value);
@@ -83,11 +83,11 @@ impl<'a> State<'a> {
         self.return_value = Some(Box::new(v));
     }
 
-    pub fn last(&self) -> &RefCell<HashMap<String, Value<'a>>> {
+    pub fn last(&self) -> &RefCell<HashMap<&'a str, Value<'a>>> {
         self.environments.last().unwrap()
     }
 
-    pub fn get_environments(&self) -> Vec<Rc<RefCell<HashMap<String, Value<'a>>>>> {
+    pub fn get_environments(&self) -> Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>> {
         self.environments.clone()
     }
 }

@@ -2,7 +2,7 @@ use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation,
 use std::collections::HashMap;
 
 pub struct Resolver<'a> {
-    scopes: Vec<HashMap<String, bool>>,
+    scopes: Vec<HashMap<&'a str, bool>>,
     uses: Vec<HashMap<&'a str, usize>>,
     locations: Vec<HashMap<&'a str, &'a SourceCodeLocation<'a>>>,
     locals: HashMap<usize, usize>,
@@ -17,7 +17,7 @@ impl<'a> Resolver<'a> {
             uses: vec![HashMap::default()],
         }
     }
-    fn push_scope(&mut self, scope: HashMap<String, bool>) {
+    fn push_scope(&mut self, scope: HashMap<&'a str, bool>) {
         self.scopes.push(scope);
         self.uses.push(HashMap::default());
         self.locations.push(HashMap::default());
@@ -56,7 +56,7 @@ impl<'a> Resolver<'a> {
                     location: location.clone(),
                 });
             }
-            s.insert(name.to_owned(), false);
+            s.insert(name, false);
             if let Some(locations) = self.locations.last_mut() {
                 locations.insert(name, location);
             }
@@ -66,12 +66,12 @@ impl<'a> Resolver<'a> {
         }
         Ok(())
     }
-    fn define(&mut self, name: &str) {
+    fn define(&mut self, name: &'a str) {
         if let Some(s) = self.scopes
             .iter_mut()
             .rev()
             .find(|s| s.contains_key(name)) {
-            s.insert(name.to_owned(), true);
+            s.insert(name, true);
         }
     }
     fn resolve_local(&mut self, expression: &Expression<'a>, name: &'a str) -> Result<(), ProgramError<'a>> {
@@ -104,7 +104,7 @@ impl<'a> Resolver<'a> {
             .map(|s| {
                 if let StatementType::FunctionDeclaration { name, .. } = &s.statement_type {
                     if !check_defined {
-                        self.scopes.last_mut().map(|h| h.remove(name));
+                        self.scopes.last_mut().map(|h| h.remove(*name));
                     }
                 }
                 let r = self.resolve(s);
@@ -118,7 +118,7 @@ impl<'a> Resolver<'a> {
     }
     fn resolve_function<'b>(
         &mut self,
-        arguments: &'a [String],
+        arguments: &'a [&'a str],
         body: &'b [&'a Statement<'a>],
         location: &'a SourceCodeLocation<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
@@ -133,6 +133,7 @@ impl<'a> Resolver<'a> {
         self.pop_scope()?;
         Ok(())
     }
+
     fn define_and_use(
         &mut self,
         variable: &'a str,
@@ -245,7 +246,9 @@ impl<'a> Resolver<'a> {
                     .map_err(|e| vec![e])?;
                 self.define(name);
                 let body = body.iter().map(|s| &(**s)).collect::<Vec<&Statement>>();
-                self.resolve_function(arguments, &body, &statement.location)?;
+                self.resolve_function(
+                    arguments, &body, &statement.location
+                )?;
             }
             StatementType::Expression { expression } => {
                 self.resolve_expression(expression)?;

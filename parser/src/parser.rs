@@ -260,9 +260,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }) = self.next()
         {
             if self.peek(TokenType::LeftBrace) {
-                self.parse_trait_declaration(name.to_owned(), &location)
+                self.parse_trait_declaration(name, &location)
             } else {
-                self.parse_trait_implementation(name.to_owned(), &location)
+                self.parse_trait_implementation(name, &location)
             }
         } else {
             Err(ProgramError {
@@ -274,7 +274,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
 
     fn parse_trait_implementation(
         &self,
-        trait_name: String,
+        trait_name: &'a str,
         location: &SourceCodeLocation<'a>,
     ) -> Result<Statement<'a>, ProgramError<'a>> {
         let trait_name = self.parse_variable_or_module_access(trait_name, &location)?;
@@ -283,7 +283,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             token_type: TokenType::Identifier { name },
             location,
         }) = self.next() {
-            self.parse_variable_or_module_access(name.to_owned(), &location)
+            self.parse_variable_or_module_access(name, &location)
         } else {
             Err(ProgramError {
                 location: location.clone(),
@@ -316,7 +316,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
 
     fn parse_trait_declaration(
         &self,
-        name: String,
+        name: &'a str,
         location: &SourceCodeLocation<'a>,
     ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.consume(
@@ -367,7 +367,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             let superclass = if self.peek(TokenType::Less) {
                 self.next();
                 if let Some(TokenType::Identifier { name }) = self.next().map(|t| t.token_type) {
-                    Some(self.parse_variable_or_module_access(name.to_owned(), &location)?)
+                    Some(self.parse_variable_or_module_access(name, &location)?)
                 } else {
                     return Err(ProgramError {
                         message: "Expect superclass name.".to_owned(),
@@ -392,7 +392,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             Ok(Statement {
                 statement_type: StatementType::ClassDeclaration {
                     getters: method_set.getters,
-                    name: name.to_owned(),
+                    name,
                     methods: method_set.methods,
                     setters: method_set.setters,
                     static_methods: method_set.static_methods,
@@ -488,7 +488,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     Box::new(Statement {
                         location: location.clone(),
                         statement_type: StatementType::VariableDeclaration {
-                            name: INTERNAL_MATCH_VALUE_NAME.to_owned(),
+                            name: INTERNAL_MATCH_VALUE_NAME,
                             expression: Some(value),
                         }
                     }),
@@ -503,7 +503,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             .fold(match_all, |acc, (checked_type, s)| {
                 let value = Box::new(self.expression_factory.borrow_mut().new_expression(
                     ExpressionType::VariableLiteral {
-                        identifier: INTERNAL_MATCH_VALUE_NAME.to_owned()
+                        identifier: INTERNAL_MATCH_VALUE_NAME
                     },
                     s.location.clone(),
                 ));
@@ -533,7 +533,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 ));
                 let right = Box::new(self.expression_factory.borrow_mut().new_expression(
                     ExpressionType::VariableLiteral {
-                        identifier: INTERNAL_MATCH_VALUE_NAME.to_owned()
+                        identifier: INTERNAL_MATCH_VALUE_NAME
                     },
                     s.location.clone(),
                 ));
@@ -598,7 +598,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     parse_branch!(self, types, location, Type::Trait, next_location);
                 }
                 Some(TokenType::Identifier { name }) => {
-                    let obj = Box::new(self.parse_variable_or_module_access(name.to_owned(), location)?);
+                    let obj = Box::new(self.parse_variable_or_module_access(name, location)?);
                     parse_branch!(self, types, location, Type::UserDefined(obj), next_location);
                 }
                 _ => return Err(ProgramError {
@@ -674,7 +674,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 }) => Ok(Statement {
                     location: location.clone(),
                     statement_type: StatementType::VariableDeclaration {
-                        name: name.to_owned(),
+                        name,
                         expression: None,
                     },
                 }),
@@ -686,7 +686,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     self.consume(TokenType::Semicolon, "Expected semicolon", location)?;
                     Ok(Statement {
                         location: location.clone(),
-                        statement_type: StatementType::VariableDeclaration { name: name.to_owned(), expression },
+                        statement_type: StatementType::VariableDeclaration { name, expression },
                     })
                 }
                 _ => Err(ProgramError {
@@ -757,7 +757,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
     fn parse_function_header(
         &self,
         location: &SourceCodeLocation<'a>,
-    ) -> Result<(String, Vec<String>), ProgramError<'a>> {
+    ) -> Result<(&'a str, Vec<&'a str>), ProgramError<'a>> {
         if let Some(Token {
             token_type: TokenType::Identifier { name },
             location,
@@ -774,7 +774,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 "Expected a parenthesis after parameters!",
                 &location,
             )?;
-            Ok((name.to_owned(), arguments))
+            Ok((name, arguments))
         } else {
             Err(ProgramError {
                 location: location.clone(),
@@ -1130,7 +1130,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 token_type: TokenType::Identifier { name }, location, ..
             }) => {
                 Ok(Type::UserDefined(Box::new(
-                    self.parse_variable_or_module_access(name.to_owned(), &location)?
+                    self.parse_variable_or_module_access(name, &location)?
                 )))
             }
             _ => Err(ProgramError {
@@ -1166,7 +1166,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             Ok(self.expression_factory.borrow_mut().new_expression(
                 ExpressionType::Get {
                     callee: Box::new(callee),
-                    property: name.to_owned(),
+                    property: name,
                 },
                 location,
             ))
@@ -1226,12 +1226,12 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         Ok(args)
     }
 
-    fn parse_identifier(&self) -> Result<String, ProgramError<'a>> {
+    fn parse_identifier(&self) -> Result<&'a str, ProgramError<'a>> {
         match self.next() {
             Some(Token {
                 token_type: TokenType::Identifier { name },
                 ..
-            }) => Ok(name.to_owned()),
+            }) => Ok(name),
             Some(Token { location, token_type, .. }) => Err(ProgramError {
                 location,
                 message: format!("Expected identifier! Got {:?}", token_type),
@@ -1283,7 +1283,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             Some(Token {
                 token_type: TokenType::Identifier { name },
                 location,
-            }) => self.parse_variable_or_module_access(name.to_owned(), &location),
+            }) => self.parse_variable_or_module_access(name, &location),
             Some(Token {
                 token_type: TokenType::LeftParen,
                 location,
@@ -1302,7 +1302,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }
     }
 
-    fn parse_variable_or_module_access(&self, name: String, location: &SourceCodeLocation<'a>) -> Result<Expression<'a>, ProgramError<'a>> {
+    fn parse_variable_or_module_access(&self, name: &'a str, location: &SourceCodeLocation<'a>) -> Result<Expression<'a>, ProgramError<'a>> {
         if self.peek(TokenType::DoubleColon) {
             self.consume(TokenType::DoubleColon, "Expected `::` on module access", location)?;
             let field = Box::new(self.parse_call()?);
@@ -1590,7 +1590,7 @@ mod test {
             result,
             create_expression(
                 ExpressionType::VariableLiteral {
-                    identifier: "identifier".to_owned(),
+                    identifier: "identifier",
                 },
                 location,
             )
@@ -1628,7 +1628,7 @@ mod test {
                 ExpressionType::Grouping {
                     expression: Box::new(create_expression(
                         ExpressionType::VariableLiteral {
-                            identifier: "identifier".to_owned(),
+                            identifier: "identifier",
                         },
                         location.clone(),
                     )),
@@ -1722,7 +1722,7 @@ mod test {
                 ExpressionType::Call {
                     callee: Box::new(create_expression(
                         ExpressionType::VariableLiteral {
-                            identifier: "identifier".to_owned(),
+                            identifier: "identifier",
                         },
                         location.clone(),
                     )),
@@ -1771,13 +1771,13 @@ mod test {
                 ExpressionType::Call {
                     callee: Box::new(create_expression(
                         ExpressionType::VariableLiteral {
-                            identifier: "identifier".to_owned(),
+                            identifier: "identifier",
                         },
                         location.clone(),
                     )),
                     arguments: vec![Box::new(create_expression_with_id(
                         ExpressionType::VariableLiteral {
-                            identifier: "identifier".to_owned(),
+                            identifier: "identifier",
                         },
                         location.clone(),
                         1,
@@ -1836,21 +1836,21 @@ mod test {
                 ExpressionType::Call {
                     callee: Box::new(create_expression(
                         ExpressionType::VariableLiteral {
-                            identifier: "identifier".to_owned(),
+                            identifier: "identifier",
                         },
                         location.clone(),
                     )),
                     arguments: vec![
                         Box::new(create_expression_with_id(
                             ExpressionType::VariableLiteral {
-                                identifier: "identifier".to_owned(),
+                                identifier: "identifier",
                             },
                             location.clone(),
                             1,
                         )),
                         Box::new(create_expression_with_id(
                             ExpressionType::VariableLiteral {
-                                identifier: "identifier".to_owned(),
+                                identifier: "identifier",
                             },
                             location.clone(),
                             2,
@@ -1976,20 +1976,20 @@ mod test {
                 ExpressionType::Conditional {
                     condition: Box::new(create_expression(
                         ExpressionType::VariableLiteral {
-                            identifier: "identifier".to_owned(),
+                            identifier: "identifier",
                         },
                         location.clone(),
                     )),
                     then_branch: Box::new(create_expression_with_id(
                         ExpressionType::VariableLiteral {
-                            identifier: "identifier1".to_owned(),
+                            identifier: "identifier1",
                         },
                         location.clone(),
                         1,
                     )),
                     else_branch: Box::new(create_expression_with_id(
                         ExpressionType::VariableLiteral {
-                            identifier: "identifier2".to_owned(),
+                            identifier: "identifier2",
                         },
                         location.clone(),
                         2
@@ -2032,7 +2032,7 @@ mod test {
             result,
             create_expression_with_id(
                 ExpressionType::VariableAssignment {
-                    identifier: "identifier".to_string(),
+                    identifier: "identifier",
                     expression: Box::new(create_expression_with_id(
                         ExpressionLiteral {
                             value: Literal::Float(1.0),
@@ -2227,7 +2227,7 @@ mod test {
             result,
             Statement {
                 statement_type: StatementType::VariableDeclaration {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                     expression: None,
                 },
                 location: location.clone(),
@@ -2274,7 +2274,7 @@ mod test {
             result,
             Statement {
                 statement_type: StatementType::VariableDeclaration {
-                    name: "identifier".to_owned(),
+                    name: "identifier",
                     expression: Some(create_expression(
                         ExpressionType::ExpressionLiteral {
                             value: Literal::Float(1.0),
@@ -2336,7 +2336,7 @@ mod test {
                             statement_type: StatementType::Expression {
                                 expression: create_expression(
                                     ExpressionType::VariableLiteral {
-                                        identifier: "identifier".to_owned(),
+                                        identifier: "identifier",
                                     },
                                     location.clone(),
                                 ),
@@ -2428,15 +2428,15 @@ mod test {
             result,
             Statement {
                 statement_type: StatementType::FunctionDeclaration {
-                    name: "identifier".to_owned(),
-                    arguments: vec!["argument".to_owned()],
+                    name: "identifier",
+                    arguments: vec!["argument"],
                     body: vec![
                         Box::new(Statement {
                             location: location.clone(),
                             statement_type: StatementType::Expression {
                                 expression: create_expression(
                                     ExpressionType::VariableLiteral {
-                                        identifier: "identifier".to_owned()
+                                        identifier: "identifier",
                                     },
                                     location.clone(),
                                 ),
@@ -2524,7 +2524,7 @@ mod test {
                 statement_type: StatementType::While {
                     condition: create_expression(
                         ExpressionType::VariableLiteral {
-                            identifier: "argument".to_owned(),
+                            identifier: "argument",
                         },
                         location.clone(),
                     ),
@@ -2537,7 +2537,7 @@ mod test {
                                     statement_type: StatementType::Expression {
                                         expression: create_expression_with_id(
                                             ExpressionType::VariableLiteral {
-                                                identifier: "identifier".to_owned(),
+                                                identifier: "identifier",
                                             },
                                             location.clone(),
                                             1,
@@ -2655,7 +2655,7 @@ mod test {
                         statement_type: StatementType::Expression {
                             expression: create_expression_with_id(
                                 ExpressionType::VariableLiteral {
-                                    identifier: "identifier".to_owned(),
+                                    identifier: "identifier",
                                 },
                                 location.clone(),
                                 2,
@@ -2681,7 +2681,7 @@ mod test {
             statement_type: StatementType::While {
                 condition: create_expression(
                     ExpressionType::VariableLiteral {
-                        identifier: "argument".to_owned(),
+                        identifier: "argument",
                     },
                     location.clone(),
                 ),
@@ -2695,7 +2695,7 @@ mod test {
                                 statement_type: StatementType::Expression {
                                     expression: create_expression_with_id(
                                         ExpressionType::VariableLiteral {
-                                            identifier: "argument".to_owned(),
+                                            identifier: "argument",
                                         },
                                         location.clone(),
                                         1,
@@ -2716,7 +2716,7 @@ mod test {
                         location: location.clone(),
                         statement_type: VariableDeclaration {
                             expression: None,
-                            name: "identifier".to_owned(),
+                            name: "identifier",
                         },
                     }),
                     Box::new(while_statement),
