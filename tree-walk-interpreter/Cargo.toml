@@ -8,3 +8,14 @@ edition = "2018"
 
 [dependencies]
 parser = { path = "../parser" }
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "all"
+harness = false
+
+[[bench]]
+name = "fibonacci"
+harness = false

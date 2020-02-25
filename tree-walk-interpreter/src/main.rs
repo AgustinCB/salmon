@@ -13,7 +13,7 @@ use std::process::exit;
 
 mod class;
 mod function;
-mod interpreter;
+pub mod interpreter;
 mod state;
 mod value;
 
