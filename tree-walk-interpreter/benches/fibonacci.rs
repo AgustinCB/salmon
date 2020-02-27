@@ -40,7 +40,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| fibonacci(black_box(20)))
     });
     c.bench_function("fibonacci 40", |b| {
-        b.iter(|| fibonacci(black_box(40)))
+        b.iter(|| fibonacci(black_box(20)))
     });
 }
 

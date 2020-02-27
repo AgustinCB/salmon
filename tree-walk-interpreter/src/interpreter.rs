@@ -60,7 +60,7 @@ fn statements_to_hash_set<'a>(statements: &[&Statement<'a>]) -> HashSet<Function
         } = &s.statement_type
         {
             map.insert(FunctionHeader {
-                name: name.clone(),
+                name,
                 arity: arguments.len(),
             });
         } else {
@@ -176,8 +176,7 @@ impl<'a> Interpreter<'a> {
                 let value = self.look_up_variable(expression.id(), module, &state)
                     .ok_or_else(|| {
                         expression.create_program_error(&format!("Module `{}` not found!", module))
-                    })?
-                    .clone();
+                    })?;
                 if let Value::Module(LoxModule {
                     state: module_state,
                 }) = value {
@@ -245,8 +244,7 @@ impl<'a> Interpreter<'a> {
                 let value = self.look_up_variable(expression.id(), identifier, &state)
                     .ok_or_else(|| {
                         expression.create_program_error(&format!("Variable `{}` not found!", identifier))
-                    })?
-                    .clone();
+                    })?;
                 Ok((state, value))
             }
             ExpressionType::Grouping { expression } => self.evaluate_expression(state, expression),
@@ -460,7 +458,7 @@ impl<'a> Interpreter<'a> {
                 } else {
                     (state, Value::Uninitialized)
                 };
-                s.insert_top(name.clone(), v);
+                s.insert_top(name, v);
                 s
             }
             StatementType::PrintStatement { expression } => {
@@ -476,7 +474,7 @@ impl<'a> Interpreter<'a> {
                 getters,
             } => {
                 state.insert_top(
-                    name.clone(),
+                    name,
                     Value::Trait {
                         name,
                         methods: methods.clone(),
@@ -595,7 +593,7 @@ impl<'a> Interpreter<'a> {
                 body,
             } => {
                 state.insert(
-                    name.clone(),
+                    name,
                     Value::Function(LoxFunction {
                         arguments: arguments.clone(),
                         environments: state.get_environments(),
@@ -951,7 +949,7 @@ impl<'a> Interpreter<'a> {
             if let Some(f) = instance.get_setter(property) {
                 f.eval(&[value], &self).map(|v| (final_state, v))
             } else {
-                instance.set(property.clone(), value.clone());
+                instance.set(property, value.clone());
                 Ok((final_state, value))
             }
         } else {
