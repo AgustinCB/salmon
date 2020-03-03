@@ -17,7 +17,7 @@ trait Test for TestImpl {
         print "static";
     }
     getter prop() {
-        print this.a;
+        return this.a;
     }
     setter prop(a) {
         this.a = a;

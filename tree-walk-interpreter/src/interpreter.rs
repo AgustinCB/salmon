@@ -528,10 +528,10 @@ impl<'a> Interpreter<'a> {
                         class.append_static_methods(static_methods, envs.clone());
                         check_trait_methods(getters, &trait_getters, &statement.location)
                             .map_err(|ee| ee[0].clone())?;
-                        class.append_methods(getters, envs.clone());
+                        class.append_getters(getters, envs.clone());
                         check_trait_methods(setters, &trait_setters, &statement.location)
                             .map_err(|ee| ee[0].clone())?;
-                        class.append_methods(setters, envs.clone());
+                        class.append_setters(setters, envs.clone());
                         ns
                     } else {
                         return Err(class_name
