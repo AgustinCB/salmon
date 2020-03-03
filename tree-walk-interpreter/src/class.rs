@@ -298,16 +298,7 @@ impl<'a> LoxObject<'a> {
         method_list: &[&'a Statement<'a>],
         environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
-        let mut methods = statement_list_to_function_hash_map(method_list, &environments);
-        let mut variables = vec!["this"];
-        let mut instances = vec![self.clone()];
-        if let Some(box obj) = &self.superclass {
-            variables.push("super");
-            instances.push(obj.clone());
-        }
-        for f in methods.values_mut() {
-            f.bind(&instances, &variables);
-        }
+        let methods = statement_list_to_function_hash_map(method_list, &environments);
         self.properties
             .borrow_mut()
             .extend(methods.into_iter().map(|(s, f)| (s, Value::Function(f))));
