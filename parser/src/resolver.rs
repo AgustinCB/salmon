@@ -1,4 +1,4 @@
-use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType, Type, Pass};
+use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType, Pass};
 use std::collections::HashMap;
 
 pub struct Resolver<'a> {
@@ -107,7 +107,7 @@ impl<'a> Resolver<'a> {
                         self.scopes.last_mut().map(|h| h.remove(*name));
                     }
                 }
-                let r = self.resolve(s);
+                let r = self.pass(s);
                 if let StatementType::FunctionDeclaration { name, .. } = &s.statement_type {
                     self.uses.last_mut().unwrap().insert(name, 1);
                 }
@@ -128,7 +128,7 @@ impl<'a> Resolver<'a> {
             self.define(arg);
         }
         body.iter()
-            .map(|s| self.resolve(s))
+            .map(|s| self.pass(s))
             .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
         self.pop_scope()?;
         Ok(())
@@ -144,238 +144,192 @@ impl<'a> Resolver<'a> {
         self.uses.last_mut().unwrap().insert(variable, 1);
         Ok(())
     }
-    fn resolve(&mut self, statement: &'a Statement<'a>) -> Result<(), Vec<ProgramError<'a>>> {
-        match &statement.statement_type {
-            StatementType::Module { name, statements } => {
-                self.declare(name, &statement.location)
-                    .map_err(|e| vec![e])?;
-                self.define(name);
-                self.push_scope(HashMap::default());
-                statements.iter()
-                    .map(|s| self.resolve(&s))
-                    .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
-                self.dry_pop_scope();
-            }
-            StatementType::Import { name } => {
-                self.declare(name, &statement.location)
-                    .map_err(|e| vec![e])?;
-                self.define(name);
-            }
-            StatementType::Block { body } => {
-                self.push_scope(HashMap::default());
-                body.iter()
-                    .map(|s| self.resolve(&s))
-                    .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
-                self.pop_scope()?;
-            }
-            StatementType::VariableDeclaration { expression, name } => {
-                self.declare(name, &statement.location)
-                    .map_err(|e| vec![e])?;
-                if let Some(e) = expression {
-                    self.resolve_expression(e)?;
-                    self.define(name);
-                }
-            }
-            StatementType::ClassDeclaration {
-                name,
-                methods,
-                static_methods,
-                setters,
-                getters,
-                superclass,
-            } => {
-                self.declare(name, &statement.location)
-                    .map_err(|e| vec![e])?;
-                if let Some(e) = superclass {
-                    if let ExpressionType::VariableLiteral { identifier } = &e.expression_type {
-                        if identifier == name {
-                            return Err(vec![ProgramError {
-                                message: "A class cannot inherit from itself.".to_owned(),
-                                location: statement.location.clone(),
-                            }]);
-                        }
-                        self.resolve_local(e, identifier)
-                            .map_err(|e| vec![e])?;
-                    } else {
-                        self.resolve_expression(e)?;
-                    }
-                }
-                self.push_scope(HashMap::default());
-                self.define_and_use("this", &statement.location)?;
-                if superclass.is_some() {
-                    self.define_and_use("super", &statement.location)?;
-                }
-                self.resolve_functions(methods, true)?;
-                self.resolve_functions(getters, false)?;
-                self.resolve_functions(setters, false)?;
-                self.pop_scope()?;
-                self.resolve_functions(static_methods, true)?;
-                self.define(&name);
-            }
-            StatementType::TraitDeclaration { name, .. } => {
-                self.declare(name, &statement.location)
-                    .map_err(|e| vec![e])?;
-                self.define(name);
-            }
-            StatementType::TraitImplementation {
-                class_name,
-                trait_name,
-                methods,
-                static_methods,
-                setters,
-                getters,
-                ..
-            } => {
-                self.resolve_expression(class_name)?;
-                self.resolve_expression(trait_name)?;
-                self.push_scope(HashMap::default());
-                self.define_and_use("this", &statement.location)?;
-                self.define_and_use("super", &statement.location)?;
-                self.resolve_functions(methods, true)?;
-                self.resolve_functions(getters, false)?;
-                self.resolve_functions(setters, false)?;
-                self.pop_scope()?;
-                self.resolve_functions(static_methods, true)?;
-            }
-            StatementType::FunctionDeclaration {
-                name,
-                arguments,
-                body,
-            } => {
-                self.declare(name, &statement.location)
-                    .map_err(|e| vec![e])?;
-                self.define(name);
-                let body = body.iter().map(|s| &(**s)).collect::<Vec<&Statement>>();
-                self.resolve_function(
-                    arguments, &body, &statement.location
-                )?;
-            }
-            StatementType::Expression { expression } => {
-                self.resolve_expression(expression)?;
-            }
-            StatementType::If {
-                condition,
-                then,
-                otherwise,
-            } => {
-                self.resolve_expression(condition)?;
-                self.resolve(then)?;
-                if let Some(o) = otherwise {
-                    self.resolve(o)?;
-                }
-            }
-            StatementType::PrintStatement { expression } => {
-                self.resolve_expression(expression)?;
-            }
-            StatementType::Return { value: Some(e) } => {
-                self.resolve_expression(e)?;
-            }
-            StatementType::Return { .. } => {}
-            StatementType::While { condition, action } => {
-                self.resolve_expression(condition)?;
-                self.resolve(action)?;
-            }
-            StatementType::Break => {}
-            StatementType::EOF => {}
-        };
-        Ok(())
-    }
-
-    fn resolve_expression(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
-        match &expression.expression_type {
-            ExpressionType::IsType { value, checked_type } => {
-                self.resolve_expression(value)?;
-                if let Type::UserDefined(obj) = checked_type {
-                    self.resolve_expression(obj)?;
-                }
-            }
-            ExpressionType::ModuleLiteral {
-                module, field,
-            } => {
-                self.resolve_expression(field)?;
-                self.resolve_local(expression, module).map_err(|e| vec![e])?;
-            }
-            ExpressionType::Get { callee, .. } => {
-                self.resolve_expression(callee)?;
-            }
-            ExpressionType::Set { callee, value, .. } => {
-                self.resolve_expression(callee)?;
-                self.resolve_expression(value)?;
-            }
-            ExpressionType::VariableLiteral { identifier } => {
-                self.resolve_local(expression, identifier).map_err(|e| vec![e])?;
-            }
-            ExpressionType::VariableAssignment {
-                identifier,
-                expression: expression_value,
-            } => {
-                self.define(identifier);
-                self.resolve_expression(expression_value)?;
-                self.resolve_local(expression, identifier).map_err(|e| vec![e])?;
-            }
-            ExpressionType::Binary { left, right, .. } => {
-                self.resolve_expression(left)?;
-                self.resolve_expression(right)?;
-            }
-            ExpressionType::Call { callee, arguments } => {
-                self.resolve_expression(callee)?;
-                arguments
-                    .iter()
-                    .map(|a| self.resolve_expression(a))
-                    .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
-            }
-            ExpressionType::Grouping { expression } => {
-                self.resolve_expression(expression)?;
-            }
-            ExpressionType::Conditional {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                self.resolve_expression(condition)?;
-                self.resolve_expression(then_branch)?;
-                self.resolve_expression(else_branch)?;
-            }
-            ExpressionType::Unary { operand, .. } => {
-                self.resolve_expression(operand)?;
-            }
-            ExpressionType::ExpressionLiteral { .. } => {}
-            ExpressionType::AnonymousFunction { arguments, body } => {
-                let body = body.iter().collect::<Vec<&'a Statement>>();
-                self.resolve_function(arguments, &body, &expression.location)?;
-            }
-            ExpressionType::RepeatedElementArray { element, length } => {
-                self.resolve_expression(length)?;
-                self.resolve_expression(element)?;
-            }
-            ExpressionType::Array { elements } => {
-                for element in elements {
-                    self.resolve_expression(element)?;
-                }
-            }
-            ExpressionType::ArrayElement { array, index } => {
-                self.resolve_expression(array)?;
-                self.resolve_expression(index)?;
-            }
-            ExpressionType::ArrayElementSet {
-                array,
-                index,
-                value,
-            } => {
-                self.resolve_expression(array)?;
-                self.resolve_expression(index)?;
-                self.resolve_expression(value)?;
-            }
-        };
-        Ok(())
-    }
 }
 
 impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<HashMap<usize, usize>, Vec<ProgramError<'a>>> {
         ss.iter()
-            .map(|s| self.resolve(&s))
+            .map(|s| self.pass(&s))
             .collect::<Result<Vec<()>, Vec<ProgramError<'a>>>>()?;
         Ok(self.locals.clone())
+    }
+
+    fn pass_module(
+        &mut self,
+        name: &'a str,
+        statements: &'a [Box<Statement<'a>>],
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.declare(name, &statement.location)
+            .map_err(|e| vec![e])?;
+        self.define(name);
+        self.push_scope(HashMap::default());
+        statements.iter()
+            .map(|s| self.pass(&s))
+            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
+        self.dry_pop_scope();
+        Ok(())
+    }
+
+    fn pass_import(
+        &mut self,
+        name: &'a str,
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.declare(name, &statement.location)
+            .map_err(|e| vec![e])?;
+        self.define(name);
+        Ok(())
+    }
+
+    fn pass_block(&mut self, body: &'a [Box<Statement<'a>>]) -> Result<(), Vec<ProgramError<'a>>> {
+        self.push_scope(HashMap::default());
+        body.iter()
+            .map(|s| self.pass(&s))
+            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
+        self.pop_scope()
+    }
+
+    fn pass_variable_declaration(
+        &mut self,
+        name: &'a str,
+        expression: &'a Option<Expression<'a>>,
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.declare(name, &statement.location)
+            .map_err(|e| vec![e])?;
+        if let Some(e) = expression {
+            self.pass_expression(e)?;
+            self.define(name);
+        }
+        Ok(())
+    }
+
+    fn pass_class_declaration(
+        &mut self,
+        name: &'a str,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        superclass: &'a Option<Expression<'a>>,
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.declare(name, &statement.location)
+            .map_err(|e| vec![e])?;
+        if let Some(e) = superclass {
+            if let ExpressionType::VariableLiteral { identifier } = &e.expression_type {
+                if *identifier == name {
+                    return Err(vec![ProgramError {
+                        message: "A class cannot inherit from itself.".to_owned(),
+                        location: statement.location.clone(),
+                    }]);
+                }
+                self.resolve_local(e, identifier)
+                    .map_err(|e| vec![e])?;
+            } else {
+                self.pass_expression(e)?;
+            }
+        }
+        self.push_scope(HashMap::default());
+        self.define_and_use("this", &statement.location)?;
+        if superclass.is_some() {
+            self.define_and_use("super", &statement.location)?;
+        }
+        self.resolve_functions(methods, true)?;
+        self.resolve_functions(getters, false)?;
+        self.resolve_functions(setters, false)?;
+        self.pop_scope()?;
+        self.resolve_functions(static_methods, true)?;
+        self.define(&name);
+        Ok(())
+    }
+
+    fn pass_trait_declaration(
+        &mut self,
+        name: &'a str,
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.declare(name, &statement.location)
+            .map_err(|e| vec![e])?;
+        self.define(name);
+        Ok(())
+    }
+
+    fn pass_trait_implementation(
+        &mut self,
+        class_name: &'a Expression<'a>,
+        trait_name: &'a Expression<'a>,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(class_name)?;
+        self.pass_expression(trait_name)?;
+        self.push_scope(HashMap::default());
+        self.define_and_use("this", &statement.location)?;
+        self.define_and_use("super", &statement.location)?;
+        self.resolve_functions(methods, true)?;
+        self.resolve_functions(getters, false)?;
+        self.resolve_functions(setters, false)?;
+        self.pop_scope()?;
+        self.resolve_functions(static_methods, true)
+    }
+
+    fn pass_function_declaration(
+        &mut self,
+        name: &'a str,
+        arguments: &'a [&'a str],
+        body: &'a [Box<Statement<'a>>],
+        statement: &'a Statement<'a>
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.declare(name, &statement.location)
+            .map_err(|e| vec![e])?;
+        self.define(name);
+        let body = body.iter().map(|s| &(**s)).collect::<Vec<&Statement>>();
+        self.resolve_function(
+            arguments, &body, &statement.location
+        )
+    }
+
+    fn pass_module_literal(
+        &mut self,
+        module: &'a str,
+        field: &'a Expression<'a>,
+        expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(field)?;
+        self.resolve_local(expression, module).map_err(|e| vec![e])
+    }
+
+    fn pass_variable_literal(
+        &mut self,
+        identifier: &'a str,
+        expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.resolve_local(expression, identifier).map_err(|e| vec![e])
+    }
+
+    fn pass_variable_assignment(
+        &mut self,
+        identifier: &'a str,
+        expression_value: &'a Expression<'a>,
+        expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.define(identifier);
+        self.pass_expression(expression_value)?;
+        self.resolve_local(expression, identifier).map_err(|e| vec![e])
+    }
+
+    fn pass_anonymous_function(
+        &mut self,
+        arguments: &'a [&'a str],
+        body: &'a [Statement<'a>],
+        expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let body = body.iter().collect::<Vec<&'a Statement>>();
+        self.resolve_function(arguments, &body, &expression.location)
     }
 }
