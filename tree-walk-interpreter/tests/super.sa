@@ -6,7 +6,7 @@ class Doughnut {
 
 class BostonCream < Doughnut {
   cook() {
-    super.cook();
+    this.super.cook();
     print "Pipe full of custard and coat with chocolate.";
   }
 }

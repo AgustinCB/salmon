@@ -399,7 +399,7 @@ class Doughnut2 {
 
 class BostonCream2 < Doughnut2 {
   cook() {
-    super.cook();
+    this.super.cook();
     print \"Pipe full of custard and coat with chocolate.\";
   }
 }

@@ -29,7 +29,8 @@ impl<'a> Resolver<'a> {
     }
     fn pop_scope(&mut self) -> Result<(), Vec<ProgramError<'a>>> {
         self.scopes.pop();
-        if let (Some(variables), Some(locations)) = (self.uses.pop(), self.locations.pop()) {
+        if let (Some(mut variables), Some(locations)) = (self.uses.pop(), self.locations.pop()) {
+            variables.insert("this", 1);
             let errors: Vec<ProgramError<'a>> = variables
                 .iter()
                 .filter(|(_, uses)| **uses == 0)
@@ -133,17 +134,6 @@ impl<'a> Resolver<'a> {
         self.pop_scope()?;
         Ok(())
     }
-
-    fn define_and_use(
-        &mut self,
-        variable: &'a str,
-        location: &'a SourceCodeLocation<'a>,
-    ) -> Result<(), Vec<ProgramError<'a>>> {
-        self.declare(variable, location).map_err(|e| vec![e])?;
-        self.define(variable);
-        self.uses.last_mut().unwrap().insert(variable, 1);
-        Ok(())
-    }
 }
 
 impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
@@ -232,15 +222,11 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
             }
         }
         self.push_scope(HashMap::default());
-        self.define_and_use("this", &statement.location)?;
-        if superclass.is_some() {
-            self.define_and_use("super", &statement.location)?;
-        }
         self.resolve_functions(methods, true)?;
         self.resolve_functions(getters, false)?;
         self.resolve_functions(setters, false)?;
-        self.pop_scope()?;
         self.resolve_functions(static_methods, true)?;
+        self.pop_scope()?;
         self.define(&name);
         Ok(())
     }
@@ -264,18 +250,16 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
         static_methods: &'a [Box<Statement<'a>>],
         setters: &'a [Box<Statement<'a>>],
         getters: &'a [Box<Statement<'a>>],
-        statement: &'a Statement<'a>,
+        _statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(class_name)?;
         self.pass_expression(trait_name)?;
         self.push_scope(HashMap::default());
-        self.define_and_use("this", &statement.location)?;
-        self.define_and_use("super", &statement.location)?;
         self.resolve_functions(methods, true)?;
         self.resolve_functions(getters, false)?;
         self.resolve_functions(setters, false)?;
-        self.pop_scope()?;
-        self.resolve_functions(static_methods, true)
+        self.resolve_functions(static_methods, true)?;
+        self.pop_scope()
     }
 
     fn pass_function_declaration(

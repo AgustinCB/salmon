@@ -214,7 +214,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         self.content.borrow_mut().peek().is_none()
     }
 
-    fn parse_method_set<T, C: Fn(&mut Vec<T>, &SourceCodeLocation<'a>) -> Result<(), ProgramError<'a>>>(
+    fn parse_method_set<T, C: Fn(&mut Vec<T>, &SourceCodeLocation<'a>, bool) -> Result<(), ProgramError<'a>>>(
         &self,
         location: &SourceCodeLocation<'a>,
         action: C,
@@ -224,9 +224,11 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         let mut setters = vec![];
         let mut getters = vec![];
         while !self.peek(TokenType::RightBrace) {
+            let mut is_static = false;
             let vector = match self.dry_next().map(|t| t.token_type) {
                 Some(TokenType::Class) => {
                     self.next();
+                    is_static = true;
                     &mut static_methods
                 }
                 Some(TokenType::Getter) => {
@@ -239,7 +241,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 }
                 _ => &mut methods,
             };
-            action(vector, location)?;
+            action(vector, location, is_static)?;
         }
         Ok(MethodSet {
             getters,
@@ -324,8 +326,14 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             "Expected '{' before trait body",
             location,
         )?;
-        let method_set = self.parse_method_set(location, |vector, location| {
-            let (name, arguments) = self.parse_function_header(location)?;
+        let method_set = self.parse_method_set(location, |vector, location, is_static| {
+            let mut arguments = if is_static {
+                vec![]
+            } else {
+                vec!["this"]
+            };
+            let (name, extra_arguments) = self.parse_function_header(location)?;
+            arguments.extend(&extra_arguments);
             self.consume(
                 TokenType::Semicolon,
                 "Expected ';' after function header",
@@ -412,14 +420,14 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         &self,
         location: &SourceCodeLocation<'a>,
     ) -> Result<MethodSet<Box<Statement<'a>>>, ProgramError<'a>> {
-        let method_set = self.parse_method_set(&location, |vector, location| {
-            let f = Box::new(self.parse_function(location)?);
+        let method_set = self.parse_method_set(&location, |vector, location, is_static| {
+            let f = Box::new(self.parse_function(location, !is_static)?);
             vector.push(f);
             Ok(())
         })?;
         for getter in method_set.getters.iter() {
             if let StatementType::FunctionDeclaration { arguments, .. } = &getter.statement_type {
-                if !arguments.is_empty() {
+                if arguments.len() != 1 {
                     return Err(ProgramError {
                         message: "Getter function should take no arguments".to_owned(),
                         location: getter.location.clone(),
@@ -429,7 +437,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }
         for setter in method_set.setters.iter() {
             if let StatementType::FunctionDeclaration { arguments, .. } = &setter.statement_type {
-                if arguments.len() != 1 {
+                if arguments.len() != 2 {
                     return Err(ProgramError {
                         message: "Setter function should take one argument".to_owned(),
                         location: setter.location.clone(),
@@ -751,7 +759,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         location: &SourceCodeLocation<'a>,
     ) -> Result<Statement<'a>, ProgramError<'a>> {
         self.content.borrow_mut().next();
-        self.parse_function(location)
+        self.parse_function(location, false)
     }
 
     fn parse_function_header(
@@ -783,8 +791,13 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }
     }
 
-    fn parse_function(&self, location: &SourceCodeLocation<'a>) -> Result<Statement<'a>, ProgramError<'a>> {
-        let (name, arguments) = self.parse_function_header(location)?;
+    fn parse_function(&self, location: &SourceCodeLocation<'a>, add_this: bool) -> Result<Statement<'a>, ProgramError<'a>> {
+        let mut arguments = vec![];
+        if add_this {
+            arguments.push("this");
+        }
+        let (name, extra_arguments) = self.parse_function_header(location)?;
+        arguments.extend(&extra_arguments);
         let body = if let StatementType::Block { body } =
             self.parse_block_statement(location.clone())?.statement_type
         {

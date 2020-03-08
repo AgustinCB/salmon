@@ -761,6 +761,25 @@ impl<'a> Interpreter<'a> {
                     )
                         .as_str(),
                 )),
+            Value::Method(f, _) if f.arguments.len() != arguments.len() + 1 => Err(callee
+                .create_program_error(
+                    format!(
+                        "Wrong number of arguments in method! Expected: {} Got: {}",
+                        f.arguments.len(),
+                        arguments.len()
+                    )
+                        .as_str(),
+                )),
+            Value::Method(f, this) => {
+                let mut values = vec![Value::Object(this)];
+                let mut current_state = next_state;
+                for e in arguments {
+                    let (value_status, value) = self.evaluate_expression(current_state, e)?;
+                    current_state = value_status;
+                    values.push(value);
+                }
+                f.eval(&values, &self).map(|v| (current_state, v))
+            }
             Value::Function(f) => {
                 let mut values = vec![];
                 let mut current_state = next_state;
@@ -917,7 +936,7 @@ impl<'a> Interpreter<'a> {
                     Ok((next_state, v))
                 } else {
                     if let Some(v) = instance.get_getter(property) {
-                        v.eval(&[], &self).map(|v| (next_state, v))
+                        v.eval(&[Value::Object(instance)], &self).map(|v| (next_state, v))
                     } else {
                         Err(callee
                             .create_program_error(format!("Undefined property {}.", property).as_str()))
@@ -947,7 +966,7 @@ impl<'a> Interpreter<'a> {
         if let Value::Object(mut instance) = object {
             let (final_state, value) = self.evaluate_expression(ts, value)?;
             if let Some(f) = instance.get_setter(property) {
-                f.eval(&[value], &self).map(|v| (final_state, v))
+                f.eval(&[Value::Object(instance), value], &self).map(|v| (final_state, v))
             } else {
                 instance.set(property, value.clone());
                 Ok((final_state, value))

@@ -67,8 +67,9 @@ impl<'a> LoxClass<'a> {
         getters: &[&'a Statement<'a>],
         setters: &[&'a Statement<'a>],
         superclass: Option<LoxClass<'a>>,
-        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
+        mut environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) -> LoxClass<'a> {
+        environments.push(Rc::new(RefCell::new(HashMap::default())));
         let methods = Rc::new(RefCell::new(statement_list_to_function_hash_map(
             method_list,
             &environments,
@@ -126,8 +127,9 @@ impl<'a> LoxClass<'a> {
     pub fn append_methods(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
+        mut environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
+        environments.push(Rc::new(RefCell::new(HashMap::default())));
         let methods = statement_list_to_function_hash_map(method_list, &environments);
         self.methods.borrow_mut().extend(methods);
     }
@@ -135,8 +137,9 @@ impl<'a> LoxClass<'a> {
     pub fn append_static_methods(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
+        mut environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
+        environments.push(Rc::new(RefCell::new(HashMap::default())));
         self.static_instance
             .append_methods(method_list, environments);
     }
@@ -144,8 +147,9 @@ impl<'a> LoxClass<'a> {
     pub fn append_getters(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
+        mut environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
+        environments.push(Rc::new(RefCell::new(HashMap::default())));
         let getters = statement_list_to_function_hash_map(method_list, &environments);
         self.getters.borrow_mut().extend(getters);
     }
@@ -153,8 +157,9 @@ impl<'a> LoxClass<'a> {
     pub fn append_setters(
         &self,
         method_list: &[&'a Statement<'a>],
-        environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
+        mut environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) {
+        environments.push(Rc::new(RefCell::new(HashMap::default())));
         let setters = statement_list_to_function_hash_map(method_list, &environments);
         self.setters.borrow_mut().extend(setters);
     }
@@ -186,28 +191,19 @@ impl<'a> LoxObject<'a> {
             superclass: superclass.clone(),
             traits: class.traits.borrow().clone(),
         };
-        let mut variables = vec!["this"];
-        let mut instances = vec![object.clone()];
         if let Some(box obj) = &superclass {
-            variables.push("super");
-            instances.push(obj.clone());
+            properties.borrow_mut().insert("super", Value::Object(obj.clone()));
         }
         for (name, f) in class.methods.borrow().iter() {
-            let mut f = f.clone();
-            f.bind(&instances, &variables);
             properties
                 .borrow_mut()
-                .insert(name.clone(), Value::Function(f));
+                .insert(name.clone(), Value::Method(f.clone(), object.clone()));
         }
         for (name, f) in class.getters.borrow().iter() {
-            let mut f = f.clone();
-            f.bind(&instances, &variables);
-            object.getters.insert(name.clone(), f);
+            object.getters.insert(name.clone(), f.clone());
         }
         for (name, f) in class.setters.borrow().iter() {
-            let mut f = f.clone();
-            f.bind(&instances, &variables);
-            object.setters.insert(name.clone(), f);
+            object.setters.insert(name.clone(), f.clone());
         }
         object
     }
@@ -255,8 +251,10 @@ impl<'a> LoxObject<'a> {
         if let Some(s) = &self.superclass {
             s.init(values, interpreter, location)?;
         }
-        if let Some(Value::Function(f)) = self.properties.borrow().get("init") {
-            f.eval(values, interpreter)?;
+        if let Some(Value::Method(f, obj)) = self.properties.borrow().get("init") {
+            let mut arguments: Vec<Value<'a>> = vec![Value::Object(obj.clone())];
+            arguments.extend_from_slice(values);
+            f.eval(&arguments, interpreter)?;
             Ok(())
         } else if values.len() != 0 {
             Err(ProgramError {

@@ -1,4 +1,3 @@
-use crate::class::LoxObject;
 use crate::state::State;
 use crate::value::Value;
 use parser::types::{ProgramError, SourceCodeLocation, Statement};
@@ -27,7 +26,7 @@ impl<'a> LoxFunction<'a> {
                 message: format!(
                     "Wrong number of arguments: Received {}, expected {}",
                     values.len(),
-                    self.arguments.len()
+                    self.arguments.len(),
                 ),
                 location: self.location.clone(),
             });
@@ -46,14 +45,6 @@ impl<'a> LoxFunction<'a> {
             }
         }
         Ok(Value::Nil)
-    }
-
-    pub(crate) fn bind(&mut self, instances: &[LoxObject<'a>], variables: &[&'a str]) {
-        let mut new_scope = HashMap::default();
-        for (variable, obj) in variables.into_iter().zip(instances.into_iter()) {
-            new_scope.insert(*variable, Value::Object(obj.clone()));
-        }
-        self.environments.push(Rc::new(RefCell::new(new_scope)));
     }
 }
 

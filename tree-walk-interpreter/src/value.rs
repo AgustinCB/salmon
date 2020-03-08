@@ -30,6 +30,7 @@ pub enum Value<'a> {
         value: String,
     },
     Function(LoxFunction<'a>),
+    Method(LoxFunction<'a>, LoxObject<'a>),
     Class(LoxClass<'a>),
     Object(LoxObject<'a>),
     Trait {
@@ -192,6 +193,7 @@ impl<'a> Display for Value<'a> {
             Value::Function(lf) => f.write_str(format!("{:?}", *lf).as_str()),
             Value::Class(c) => f.write_str(format!("{}", c.name).as_str()),
             Value::Object(c) => f.write_str(format!("{} instance", c.class_name).as_str()),
+            Value::Method(lf, o) => f.write_str(format!("Method {:?} of {}", lf, o.class_name).as_str()),
             Value::Trait { name, .. } => f.write_str(name),
             Value::Array { elements, .. } => {
                 f.write_str("[ ")?;
