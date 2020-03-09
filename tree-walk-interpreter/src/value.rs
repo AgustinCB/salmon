@@ -29,8 +29,8 @@ pub enum Value<'a> {
     String {
         value: String,
     },
-    Function(LoxFunction<'a>),
-    Method(LoxFunction<'a>, LoxObject<'a>),
+    Function(Rc<LoxFunction<'a>>),
+    Method(Rc<LoxFunction<'a>>, LoxObject<'a>),
     Class(LoxClass<'a>),
     Object(LoxObject<'a>),
     Trait {

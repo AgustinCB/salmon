@@ -394,12 +394,12 @@ impl<'a> Interpreter<'a> {
                 self.call_expression(state, callee, arguments)
             }
             ExpressionType::AnonymousFunction { arguments, body } => {
-                let f = Value::Function(LoxFunction {
+                let f = Value::Function(Rc::new(LoxFunction {
                     arguments: arguments.to_vec(),
                     body: body.iter().collect(),
                     environments: state.get_environments(),
                     location: expression.location.clone(),
-                });
+                }));
                 Ok((state, f))
             }
         }
@@ -594,12 +594,12 @@ impl<'a> Interpreter<'a> {
             } => {
                 state.insert(
                     name,
-                    Value::Function(LoxFunction {
+                    Value::Function(Rc::new(LoxFunction {
                         arguments: arguments.clone(),
                         environments: state.get_environments(),
                         body: body.into_iter().map(AsRef::as_ref).collect(),
                         location: statement.location.clone(),
-                    }),
+                    })),
                 );
                 state
             }
@@ -1124,7 +1124,6 @@ mod common_test {
 
 #[cfg(test)]
 mod test_statement {
-    use crate::function::LoxFunction;
     use crate::state::State;
     use crate::value::Value;
     use parser::types::{
@@ -1299,21 +1298,16 @@ mod test_statement {
         let (s, _) = interpreter.evaluate(state, &statement).unwrap();
         let value = s.find("function").unwrap();
         match value {
-            Value::Function(LoxFunction {
-                arguments,
-                body,
-                location: l,
-                ..
-            }) => {
-                assert_eq!(arguments, Vec::<String>::new());
+            Value::Function(lf ) => {
+                assert_eq!(lf.arguments, Vec::<String>::new());
                 assert_eq!(
-                    body,
+                    lf.body,
                     vec![&Statement {
                         statement_type: StatementType::EOF,
                         location: location.clone(),
                     }]
                 );
-                assert_eq!(l, location);
+                assert_eq!(lf.location, location);
             }
             _ => panic!("Wrong type! Should be Function!"),
         }
@@ -1492,6 +1486,7 @@ mod test_expression {
     };
     use std::collections::HashMap;
     use super::common_test::{create_expression, get_variable};
+    use std::rc::Rc;
 
     #[test]
     fn test_expression_literal() {
@@ -1994,12 +1989,12 @@ mod test_expression {
         state.insert("identifier", Value::Float { value: 0.0 });
         state.insert(
             "function",
-            Value::Function(LoxFunction {
+            Value::Function(Rc::new(LoxFunction {
                 arguments: vec![],
                 environments: state.get_environments(),
                 body: vec![&s],
                 location,
-            }),
+            })),
         );
         let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
         state.last().borrow_mut().remove("function");

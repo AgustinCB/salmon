@@ -23,7 +23,7 @@ fn function_declaration_to_lox_funxtion<'a>(
 fn statement_list_to_function_hash_map<'a>(
     statements: &[&'a Statement<'a>],
     environments: &[Rc<RefCell<HashMap<&'a str, Value<'a>>>>],
-) -> HashMap<&'a str, LoxFunction<'a>> {
+) -> HashMap<&'a str, Rc<LoxFunction<'a>>> {
     let mut functions = HashMap::default();
     for s in statements {
         match &s.statement_type {
@@ -34,12 +34,12 @@ fn statement_list_to_function_hash_map<'a>(
             } => {
                 functions.insert(
                     name.clone(),
-                    function_declaration_to_lox_funxtion(
+                    Rc::new(function_declaration_to_lox_funxtion(
                         arguments,
                         body.iter().map(AsRef::as_ref).collect(),
                         &s.location,
                         &environments,
-                    ),
+                    )),
                 );
             }
             _ => panic!("Unexpected method"),
@@ -50,9 +50,9 @@ fn statement_list_to_function_hash_map<'a>(
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoxClass<'a> {
-    methods: Rc<RefCell<HashMap<&'a str, LoxFunction<'a>>>>,
-    getters: Rc<RefCell<HashMap<&'a str, LoxFunction<'a>>>>,
-    setters: Rc<RefCell<HashMap<&'a str, LoxFunction<'a>>>>,
+    methods: Rc<RefCell<HashMap<&'a str, Rc<LoxFunction<'a>>>>>,
+    getters: Rc<RefCell<HashMap<&'a str, Rc<LoxFunction<'a>>>>>,
+    setters: Rc<RefCell<HashMap<&'a str, Rc<LoxFunction<'a>>>>>,
     traits: Rc<RefCell<HashSet<&'a str>>>,
     pub superclass: Option<Box<LoxClass<'a>>>,
     pub name: &'a str,
@@ -92,12 +92,12 @@ impl<'a> LoxClass<'a> {
                 } => {
                     static_methods.push((
                         name.clone(),
-                        function_declaration_to_lox_funxtion(
+                        Rc::new(function_declaration_to_lox_funxtion(
                             arguments,
                             body.iter().map(AsRef::as_ref).collect(),
                             &ms.location,
                             &environments,
-                        ),
+                        )),
                     ));
                 }
                 _ => panic!("Unexpected method"),
@@ -168,8 +168,8 @@ impl<'a> LoxClass<'a> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoxObject<'a> {
     properties: Rc<RefCell<HashMap<&'a str, Value<'a>>>>,
-    getters: HashMap<&'a str, LoxFunction<'a>>,
-    setters: HashMap<&'a str, LoxFunction<'a>>,
+    getters: HashMap<&'a str, Rc<LoxFunction<'a>>>,
+    setters: HashMap<&'a str, Rc<LoxFunction<'a>>>,
     pub superclass: Option<Box<LoxObject<'a>>>,
     pub class_name: &'a str,
     pub traits: HashSet<&'a str>,
@@ -210,7 +210,7 @@ impl<'a> LoxObject<'a> {
 
     fn new_static(
         class_name: &'a str,
-        methods: &[(&'a str, LoxFunction<'a>)],
+        methods: &[(&'a str, Rc<LoxFunction<'a>>)],
         superclass: Option<LoxClass<'a>>,
     ) -> LoxObject<'a> {
         let properties = Rc::new(RefCell::new(HashMap::default()));
@@ -227,7 +227,7 @@ impl<'a> LoxObject<'a> {
                         .borrow()
                         .clone()
                         .into_iter()
-                        .collect::<Vec<(&'a str, LoxFunction)>>(),
+                        .collect::<Vec<(&'a str, Rc<LoxFunction>)>>(),
                     c.superclass.map(|c| *c),
                 )
             })
@@ -270,11 +270,11 @@ impl<'a> LoxObject<'a> {
         }
     }
 
-    pub fn get_setter(&self, name: &str) -> Option<LoxFunction<'a>> {
+    pub fn get_setter(&self, name: &str) -> Option<Rc<LoxFunction<'a>>> {
         self.setters.get(name).cloned()
     }
 
-    pub fn get_getter(&self, name: &str) -> Option<LoxFunction<'a>> {
+    pub fn get_getter(&self, name: &str) -> Option<Rc<LoxFunction<'a>>> {
         self.getters.get(name).cloned()
     }
 
