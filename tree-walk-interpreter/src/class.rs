@@ -54,9 +54,9 @@ pub struct LoxClass<'a> {
     getters: Rc<RefCell<HashMap<&'a str, Rc<LoxFunction<'a>>>>>,
     setters: Rc<RefCell<HashMap<&'a str, Rc<LoxFunction<'a>>>>>,
     traits: Rc<RefCell<HashSet<&'a str>>>,
-    pub superclass: Option<Box<LoxClass<'a>>>,
+    pub superclass: Option<Rc<LoxClass<'a>>>,
     pub name: &'a str,
-    pub static_instance: LoxObject<'a>,
+    pub static_instance: Rc<LoxObject<'a>>,
 }
 
 impl<'a> LoxClass<'a> {
@@ -66,7 +66,7 @@ impl<'a> LoxClass<'a> {
         method_list: &[&'a Statement<'a>],
         getters: &[&'a Statement<'a>],
         setters: &[&'a Statement<'a>],
-        superclass: Option<LoxClass<'a>>,
+        superclass: Option<Rc<LoxClass<'a>>>,
         mut environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
     ) -> LoxClass<'a> {
         environments.push(Rc::new(RefCell::new(HashMap::default())));
@@ -104,14 +104,14 @@ impl<'a> LoxClass<'a> {
             }
         }
         let static_instance =
-            LoxObject::new_static(name, &static_methods, superclass.clone());
+            Rc::new(LoxObject::new_static(name, &static_methods, superclass.clone()));
         LoxClass {
             getters,
             methods,
             name,
             setters,
             static_instance,
-            superclass: superclass.map(Box::new),
+            superclass,
             traits: Rc::new(RefCell::new(HashSet::new())),
         }
     }
@@ -170,19 +170,18 @@ pub struct LoxObject<'a> {
     properties: Rc<RefCell<HashMap<&'a str, Value<'a>>>>,
     getters: HashMap<&'a str, Rc<LoxFunction<'a>>>,
     setters: HashMap<&'a str, Rc<LoxFunction<'a>>>,
-    pub superclass: Option<Box<LoxObject<'a>>>,
+    pub superclass: Option<Rc<LoxObject<'a>>>,
     pub class_name: &'a str,
     pub traits: HashSet<&'a str>,
 }
 
 impl<'a> LoxObject<'a> {
-    pub fn new(class: LoxClass<'a>) -> LoxObject<'a> {
+    pub fn new(class: Rc<LoxClass<'a>>) -> Rc<LoxObject<'a>> {
         let properties = Rc::new(RefCell::new(HashMap::default()));
         let superclass = class
             .superclass
-            .map(|c| *c)
-            .map(LoxObject::new)
-            .map(Box::new);
+            .clone()
+            .map(LoxObject::new);
         let mut object = LoxObject {
             class_name: class.name.clone(),
             getters: HashMap::default(),
@@ -191,13 +190,8 @@ impl<'a> LoxObject<'a> {
             superclass: superclass.clone(),
             traits: class.traits.borrow().clone(),
         };
-        if let Some(box obj) = &superclass {
+        if let Some(obj) = &superclass {
             properties.borrow_mut().insert("super", Value::Object(obj.clone()));
-        }
-        for (name, f) in class.methods.borrow().iter() {
-            properties
-                .borrow_mut()
-                .insert(name.clone(), Value::Method(f.clone(), object.clone()));
         }
         for (name, f) in class.getters.borrow().iter() {
             object.getters.insert(name.clone(), f.clone());
@@ -205,13 +199,19 @@ impl<'a> LoxObject<'a> {
         for (name, f) in class.setters.borrow().iter() {
             object.setters.insert(name.clone(), f.clone());
         }
+        let object = Rc::new(object);
+        for (name, f) in class.methods.borrow().iter() {
+            properties
+                .borrow_mut()
+                .insert(name.clone(), Value::Method(f.clone(), object.clone()));
+        }
         object
     }
 
     fn new_static(
         class_name: &'a str,
         methods: &[(&'a str, Rc<LoxFunction<'a>>)],
-        superclass: Option<LoxClass<'a>>,
+        superclass: Option<Rc<LoxClass<'a>>>,
     ) -> LoxObject<'a> {
         let properties = Rc::new(RefCell::new(HashMap::default()));
         for (name, function) in methods {
@@ -228,10 +228,10 @@ impl<'a> LoxObject<'a> {
                         .clone()
                         .into_iter()
                         .collect::<Vec<(&'a str, Rc<LoxFunction>)>>(),
-                    c.superclass.map(|c| *c),
+                    c.superclass.clone(),
                 )
             })
-            .map(Box::new);
+            .map(Rc::new);
         LoxObject {
             getters: HashMap::new(),
             setters: HashMap::new(),
@@ -287,7 +287,7 @@ impl<'a> LoxObject<'a> {
         }
     }
 
-    pub fn set(&mut self, name: &'a str, value: Value<'a>) {
+    pub fn set(&self, name: &'a str, value: Value<'a>) {
         self.properties.borrow_mut().insert(name, value);
     }
 

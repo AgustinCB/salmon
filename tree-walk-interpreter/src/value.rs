@@ -30,9 +30,9 @@ pub enum Value<'a> {
         value: String,
     },
     Function(Rc<LoxFunction<'a>>),
-    Method(Rc<LoxFunction<'a>>, LoxObject<'a>),
-    Class(LoxClass<'a>),
-    Object(LoxObject<'a>),
+    Method(Rc<LoxFunction<'a>>, Rc<LoxObject<'a>>),
+    Class(Rc<LoxClass<'a>>),
+    Object(Rc<LoxObject<'a>>),
     Trait {
         name: &'a str,
         methods: Vec<FunctionHeader<'a>>,

@@ -563,7 +563,7 @@ impl<'a> Interpreter<'a> {
                 };
                 state.insert_top(
                     name.to_owned(),
-                    Value::Class(LoxClass::new(
+                    Value::Class(Rc::new(LoxClass::new(
                         name.to_owned(),
                         &static_methods
                             .iter()
@@ -583,7 +583,7 @@ impl<'a> Interpreter<'a> {
                             .collect::<Vec<&Statement>>(),
                         superclass,
                         state.get_environments(),
-                    )),
+                    ))),
                 );
                 state
             }
@@ -963,7 +963,7 @@ impl<'a> Interpreter<'a> {
         value: &'a Expression<'a>,
     ) -> EvaluationResult<'a> {
         let (ts, object) = self.evaluate_expression(state, callee)?;
-        if let Value::Object(mut instance) = object {
+        if let Value::Object(instance) = object {
             let (final_state, value) = self.evaluate_expression(ts, value)?;
             if let Some(f) = instance.get_setter(property) {
                 f.eval(&[Value::Object(instance), value], &self).map(|v| (final_state, v))
