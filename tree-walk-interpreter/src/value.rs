@@ -10,7 +10,7 @@ use crate::state::State;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LoxModule<'a> {
-    pub state: State<'a>,
+    pub state: RefCell<State<'a>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -44,7 +44,7 @@ pub enum Value<'a> {
         capacity: usize,
         elements: Rc<RefCell<Vec<Box<Value<'a>>>>>,
     },
-    Module(LoxModule<'a>),
+    Module(Rc<LoxModule<'a>>),
 }
 
 impl<'a> Value<'a> {

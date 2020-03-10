@@ -177,13 +177,9 @@ impl<'a> Interpreter<'a> {
                     .ok_or_else(|| {
                         expression.create_program_error(&format!("Module `{}` not found!", module))
                     })?;
-                if let Value::Module(LoxModule {
-                    state: module_state,
-                }) = value {
-                    let (s, v) = self.evaluate_expression(module_state, field)?;
-                    state.assign_at(self.locals[&expression.id()], module, &Value::Module(LoxModule {
-                        state: s,
-                    }));
+                if let Value::Module(lm) = value {
+                    let (s, v) = self.evaluate_expression(lm.state.borrow().clone(), field)?;
+                    lm.state.replace(s);
                     Ok((state, v))
                 } else {
                     Err(expression.create_program_error(&format!("Variable `{}` is not a module", module)))
@@ -705,9 +701,9 @@ impl<'a> Interpreter<'a> {
                 Ok(self.evaluate(state, statement)?.0)
             })?;
         self.blacklist.borrow_mut().pop();
-        state.insert_top(name, Value::Module(LoxModule {
-            state: module_state,
-        }));
+        state.insert_top(name, Value::Module(Rc::new(LoxModule {
+            state: RefCell::new(module_state),
+        })));
         Ok(state)
     }
 
