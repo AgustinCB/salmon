@@ -1,7 +1,7 @@
 use crate::function::LoxFunction;
 use crate::class::{LoxObject, LoxClass};
 use crate::state::State;
-use crate::value::{Value, ValueError, LoxModule, LoxTrait};
+use crate::value::{Value, ValueError, LoxModule, LoxTrait, LoxArray};
 use parser::types::{Expression, ExpressionType, FunctionHeader, ProgramError, SourceCodeLocation, Statement, StatementType, TokenType, Type};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -197,13 +197,13 @@ impl<'a> Interpreter<'a> {
                 let (ns, element) = self.evaluate_expression(state, element)?;
                 let (ns, length) = self.evaluate_expression(ns, length)?;
                 if let Value::Integer { value: length } = length {
-                    let elements = Rc::new(RefCell::new(vec![Box::new(element); length as _]));
+                    let elements = vec![Box::new(element); length as _];
                     Ok((
                         ns,
-                        Value::Array {
+                        Value::Array(Rc::new(RefCell::new(LoxArray {
                             elements,
                             capacity: length as _,
-                        },
+                        }))),
                     ))
                 } else {
                     Err(expression.create_program_error("Array length should be an integer"))
@@ -218,13 +218,12 @@ impl<'a> Interpreter<'a> {
                             elements.push(Box::new(e));
                             Ok((ns, elements))
                         })?;
-                let elements = Rc::new(RefCell::new(elements));
                 Ok((
                     next_state,
-                    Value::Array {
-                        capacity: elements.clone().borrow().len(),
-                        elements: elements.clone(),
-                    },
+                    Value::Array(Rc::new(RefCell::new(LoxArray {
+                        capacity: elements.len(),
+                        elements,
+                    }))),
                 ))
             }
             ExpressionType::Set {
@@ -974,9 +973,9 @@ impl<'a> Interpreter<'a> {
         state: State<'a>,
     ) -> EvaluationResult<'a> {
         self.array_element_operation(
-            array, index, state, |ns, elements, index_value| {
+            array, index, state, |ns, array, index_value| {
                 let (ns, value) = self.evaluate_expression(ns, value)?;
-                elements.borrow_mut()[index_value] = Box::new(value.clone());
+                array.borrow_mut().elements[index_value] = Box::new(value.clone());
                 Ok((ns, value))
             }
         )
@@ -989,13 +988,13 @@ impl<'a> Interpreter<'a> {
         state: State<'a>,
     ) -> EvaluationResult<'a> {
         self.array_element_operation(
-            array, index, state, |ns, elements, index_value| {
-                Ok((ns, *elements.borrow()[index_value].clone()))
+            array, index, state, |ns, array, index_value| {
+                Ok((ns, *array.borrow().elements[index_value].clone()))
             }
         )
     }
 
-    fn array_element_operation<I: Fn(State<'a>, Rc<RefCell<Vec<Box<Value<'a>>>>>, usize) -> EvaluationResult<'a>>(
+    fn array_element_operation<I: Fn(State<'a>, Rc<RefCell<LoxArray<'a>>>, usize) -> EvaluationResult<'a>>(
         &'a self,
         array: &'a Expression<'a>,
         index: &'a Expression<'a>,
@@ -1003,18 +1002,18 @@ impl<'a> Interpreter<'a> {
         op: I,
     ) -> EvaluationResult<'a> {
         let (ns, array_value) = self.evaluate_expression(state, array)?;
-        if let Value::Array { elements, capacity } = array_value {
+        if let Value::Array(a) = array_value {
             let (ns, index_value) = self.evaluate_expression(ns, index)?;
             let index_value: i64 = i64::try_from(index_value).map_err(|e: ValueError| index.create_program_error(
                 e.to_string().as_str(),
             ))?;
-            if (index_value as usize) < capacity {
-                op(ns, elements, index_value as usize)
+            if (index_value as usize) < a.borrow().capacity {
+                op(ns, a, index_value as usize)
             } else {
                 Err(index.create_program_error(
                     format!(
                         "You can't access element {} in an array of {} elements",
-                        index_value, capacity
+                        index_value, a.borrow().capacity
                     )
                         .as_str(),
                 ))

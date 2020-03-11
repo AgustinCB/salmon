@@ -22,6 +22,12 @@ pub struct LoxTrait<'a> {
     pub static_methods: Vec<FunctionHeader<'a>>,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct LoxArray<'a> {
+    pub capacity: usize,
+    pub elements: Vec<Box<Value<'a>>>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value<'a> {
     Nil,
@@ -43,10 +49,7 @@ pub enum Value<'a> {
     Class(Rc<LoxClass<'a>>),
     Object(Rc<LoxObject<'a>>),
     Trait(Rc<LoxTrait<'a>>),
-    Array {
-        capacity: usize,
-        elements: Rc<RefCell<Vec<Box<Value<'a>>>>>,
-    },
+    Array(Rc<RefCell<LoxArray<'a>>>),
     Module(Rc<LoxModule<'a>>),
 }
 
@@ -198,9 +201,9 @@ impl<'a> Display for Value<'a> {
             Value::Object(c) => f.write_str(format!("{} instance", c.class_name).as_str()),
             Value::Method(lf, o) => f.write_str(format!("Method {:?} of {}", lf, o.class_name).as_str()),
             Value::Trait(t) => f.write_str(t.name),
-            Value::Array { elements, .. } => {
+            Value::Array(a) => {
                 f.write_str("[ ")?;
-                for e in elements.borrow().iter() {
+                for e in a.borrow().elements.iter() {
                     f.write_str(format!("{}, ", e).as_str())?;
                 }
                 f.write_str("]")
