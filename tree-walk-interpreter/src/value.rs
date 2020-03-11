@@ -13,6 +13,15 @@ pub struct LoxModule<'a> {
     pub state: RefCell<State<'a>>,
 }
 
+#[derive(Debug, PartialEq)]
+pub struct LoxTrait<'a> {
+    pub name: &'a str,
+    pub methods: Vec<FunctionHeader<'a>>,
+    pub getters: Vec<FunctionHeader<'a>>,
+    pub setters: Vec<FunctionHeader<'a>>,
+    pub static_methods: Vec<FunctionHeader<'a>>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Value<'a> {
     Nil,
@@ -33,13 +42,7 @@ pub enum Value<'a> {
     Method(Rc<LoxFunction<'a>>, Rc<LoxObject<'a>>),
     Class(Rc<LoxClass<'a>>),
     Object(Rc<LoxObject<'a>>),
-    Trait {
-        name: &'a str,
-        methods: Vec<FunctionHeader<'a>>,
-        getters: Vec<FunctionHeader<'a>>,
-        setters: Vec<FunctionHeader<'a>>,
-        static_methods: Vec<FunctionHeader<'a>>,
-    },
+    Trait(Rc<LoxTrait<'a>>),
     Array {
         capacity: usize,
         elements: Rc<RefCell<Vec<Box<Value<'a>>>>>,
@@ -194,7 +197,7 @@ impl<'a> Display for Value<'a> {
             Value::Class(c) => f.write_str(format!("{}", c.name).as_str()),
             Value::Object(c) => f.write_str(format!("{} instance", c.class_name).as_str()),
             Value::Method(lf, o) => f.write_str(format!("Method {:?} of {}", lf, o.class_name).as_str()),
-            Value::Trait { name, .. } => f.write_str(name),
+            Value::Trait(t) => f.write_str(t.name),
             Value::Array { elements, .. } => {
                 f.write_str("[ ")?;
                 for e in elements.borrow().iter() {

@@ -1,7 +1,7 @@
 use crate::function::LoxFunction;
 use crate::class::{LoxObject, LoxClass};
 use crate::state::State;
-use crate::value::{Value, ValueError, LoxModule};
+use crate::value::{Value, ValueError, LoxModule, LoxTrait};
 use parser::types::{Expression, ExpressionType, FunctionHeader, ProgramError, SourceCodeLocation, Statement, StatementType, TokenType, Type};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -471,13 +471,13 @@ impl<'a> Interpreter<'a> {
             } => {
                 state.insert_top(
                     name,
-                    Value::Trait {
+                    Value::Trait(Rc::new(LoxTrait {
                         name,
                         methods: methods.clone(),
                         static_methods: static_methods.clone(),
                         setters: setters.clone(),
                         getters: getters.clone(),
-                    },
+                    })),
                 );
                 state
             }
@@ -492,21 +492,15 @@ impl<'a> Interpreter<'a> {
                 if let (state, Value::Class(class)) = self.evaluate_expression(state, class_name)? {
                     if let (
                         ns,
-                        Value::Trait {
-                            methods: trait_methods,
-                            static_methods: trait_static_methods,
-                            getters: trait_getters,
-                            setters: trait_setters,
-                            name,
-                        },
+                        Value::Trait(t),
                     ) = self.evaluate_expression(state, trait_name)?
                     {
-                        if class.implements(&name) {
+                        if class.implements(t.name) {
                             return Err(statement.create_program_error(
-                                format!("{} already implements {}", class.name, name).as_str(),
+                                format!("{} already implements {}", class.name, t.name).as_str(),
                             ));
                         } else {
-                            class.append_trait(name);
+                            class.append_trait(t.name);
                         }
                         let methods = &methods.iter().map(|s| s.as_ref()).collect::<Vec<&_>>();
                         let static_methods = &static_methods
@@ -516,16 +510,16 @@ impl<'a> Interpreter<'a> {
                         let getters = &getters.iter().map(|s| s.as_ref()).collect::<Vec<&_>>();
                         let setters = &setters.iter().map(|s| s.as_ref()).collect::<Vec<&_>>();
                         let envs = ns.get_environments();
-                        check_trait_methods(methods, &trait_methods, &statement.location)
+                        check_trait_methods(methods, &t.methods, &statement.location)
                             .map_err(|ee| ee[0].clone())?;
                         class.append_methods(methods, envs.clone());
-                        check_trait_methods(static_methods, &trait_static_methods, &statement.location)
+                        check_trait_methods(static_methods, &t.static_methods, &statement.location)
                             .map_err(|ee| ee[0].clone())?;
                         class.append_static_methods(static_methods, envs.clone());
-                        check_trait_methods(getters, &trait_getters, &statement.location)
+                        check_trait_methods(getters, &t.getters, &statement.location)
                             .map_err(|ee| ee[0].clone())?;
                         class.append_getters(getters, envs.clone());
-                        check_trait_methods(setters, &trait_setters, &statement.location)
+                        check_trait_methods(setters, &t.setters, &statement.location)
                             .map_err(|ee| ee[0].clone())?;
                         class.append_setters(setters, envs.clone());
                         ns
@@ -1077,8 +1071,8 @@ impl<'a> Interpreter<'a> {
                     Value::Class(lox_class) => {
                         Ok((s, Value::Boolean { value: is_class(&lox_class, obj) }))
                     }
-                    Value::Trait { name, .. } => {
-                        Ok((s, Value::Boolean { value: is_trait(&name, obj) }))
+                    Value::Trait(t) => {
+                        Ok((s, Value::Boolean { value: is_trait(&t.name, obj) }))
                     }
                     _ => Err(ProgramError {
                         location: c.location.clone(),
