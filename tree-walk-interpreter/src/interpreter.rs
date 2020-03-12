@@ -1,10 +1,10 @@
+use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use crate::function::LoxFunction;
 use crate::class::{LoxObject, LoxClass};
 use crate::state::State;
 use crate::value::{Value, ValueError, LoxModule, LoxTrait, LoxArray};
 use parser::types::{Expression, ExpressionType, FunctionHeader, ProgramError, SourceCodeLocation, Statement, StatementType, TokenType, Type};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
 use std::convert::{TryInto, TryFrom};
 use std::iter::FromIterator;
 use std::ops::{Add, Div, Mul, Sub};
@@ -1115,11 +1115,11 @@ mod common_test {
 mod test_statement {
     use crate::state::State;
     use crate::value::Value;
+    use ahash::{AHashMap as HashMap};
     use parser::types::{
         Expression, ExpressionType, Literal, ProgramError, SourceCodeLocation,
         Statement, StatementType, TokenType,
     };
-    use std::collections::HashMap;
     use super::common_test::{create_expression, get_variable};
     use crate::interpreter::Interpreter;
 
@@ -1465,6 +1465,7 @@ mod test_statement {
 
 #[cfg(test)]
 mod test_expression {
+    use ahash::{AHashMap as HashMap};
     use crate::function::LoxFunction;
     use crate::interpreter::Interpreter;
     use crate::state::State;
@@ -1473,7 +1474,6 @@ mod test_expression {
         DataKeyword, Expression, ExpressionType, Literal, SourceCodeLocation,
         Statement, StatementType, TokenType,
     };
-    use std::collections::HashMap;
     use super::common_test::{create_expression, get_variable};
     use std::rc::Rc;
 

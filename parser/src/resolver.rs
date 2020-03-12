@@ -1,5 +1,5 @@
 use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType, Pass};
-use std::collections::HashMap;
+use ahash::{AHashMap as HashMap};
 
 pub struct Resolver<'a> {
     scopes: Vec<HashMap<&'a str, bool>>,
