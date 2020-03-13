@@ -31,24 +31,30 @@ impl<'a> LoxFunction<'a> {
             });
         }
         let old_envs = interpreter.state.borrow().get_environments();
-        interpreter.state.borrow_mut().environments = self.environments.clone();
-        interpreter.state.borrow_mut().push();
-        for (name, value) in self.arguments.iter().cloned().zip(values.iter().cloned()) {
-            interpreter.state.borrow_mut().insert_top(name, value);
+        {
+            let mut s = interpreter.state.borrow_mut();
+            s.environments = self.environments.clone();
+            s.push();
+            for (name, value) in self.arguments.iter().zip(values.iter().cloned()) {
+                s.insert_top(name, value);
+            }
+            s.in_function = true;
         }
-        interpreter.state.borrow_mut().in_function = true;
         let mut value = Value::Nil;
         for st in self.body.iter() {
             interpreter.evaluate(st)?;
-            if let Some(return_value) = &interpreter.state.borrow().return_value {
-                value = (**return_value).clone();
+            if let Some(box return_value) = &interpreter.state.borrow().return_value {
+                value = return_value.clone();
                 break;
             }
         }
-        interpreter.state.borrow_mut().return_value = None;
-        interpreter.state.borrow_mut().pop();
-        interpreter.state.borrow_mut().in_function = false;
-        interpreter.state.borrow_mut().environments = old_envs;
+        {
+            let mut s = interpreter.state.borrow_mut();
+            s.return_value = None;
+            s.pop();
+            s.in_function = false;
+            s.environments = old_envs;
+        }
         Ok(value)
     }
 }
