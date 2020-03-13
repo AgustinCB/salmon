@@ -3,15 +3,9 @@ use crate::function::LoxFunction;
 use parser::types::{DataKeyword, FunctionHeader, Literal, ProgramError, SourceCodeLocation};
 use std::cell::RefCell;
 use std::convert::{TryInto, TryFrom};
-use std::fmt::{Display, Error, Formatter};
+use std::fmt::{Display, Error, Formatter, Debug};
 use std::ops::{Neg, Not};
 use std::rc::Rc;
-use crate::state::State;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct LoxModule<'a> {
-    pub state: RefCell<State<'a>>,
-}
 
 #[derive(Debug, PartialEq)]
 pub struct LoxTrait<'a> {
@@ -50,7 +44,7 @@ pub enum Value<'a> {
     Object(Rc<LoxObject<'a>>),
     Trait(Rc<LoxTrait<'a>>),
     Array(Rc<RefCell<LoxArray<'a>>>),
-    Module(Rc<LoxModule<'a>>),
+    Module(&'a str),
 }
 
 impl<'a> Value<'a> {

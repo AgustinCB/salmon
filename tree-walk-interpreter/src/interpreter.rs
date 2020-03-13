@@ -2,7 +2,7 @@ use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use crate::function::LoxFunction;
 use crate::class::{LoxObject, LoxClass};
 use crate::state::State;
-use crate::value::{Value, ValueError, LoxModule, LoxTrait, LoxArray};
+use crate::value::{Value, ValueError, LoxTrait, LoxArray};
 use parser::types::{Expression, ExpressionType, FunctionHeader, ProgramError, SourceCodeLocation, Statement, StatementType, TokenType, Type};
 use std::cell::{Cell, RefCell};
 use std::convert::{TryInto, TryFrom};
@@ -15,7 +15,7 @@ use std::io::Read;
 use parser::lexer::Lexer;
 use parser::parser::Parser;
 
-pub type EvaluationResult<'a> = Result<(State<'a>, Value<'a>), ProgramError<'a>>;
+pub type EvaluationResult<'a> = Result<Value<'a>, ProgramError<'a>>;
 
 fn operation<'a, R, T: TryFrom<Value<'a>, Error=ValueError>>(l: Value<'a>, r: Value<'a>, op: fn(T, T) -> R) -> Result<R, ValueError> {
     let l_number = l.try_into()?;
@@ -130,11 +130,13 @@ fn is_class<'a>(lox_class: &LoxClass<'a>, obj: &LoxObject<'a>) -> bool {
 }
 
 pub struct Interpreter<'a> {
-    blacklist: RefCell<Vec<&'a str>>,
+    pub blacklist: RefCell<Vec<&'a str>>,
     pub locals: HashMap<usize, usize>,
     modules: Cell<HashMap<&'a str, Vec<Box<Statement<'a>>>>>,
     module_contents: Cell<HashMap<&'a str, String>>,
+    module_interpreters: Cell<HashMap<&'a str, Box<Interpreter<'a>>>>,
     paths: &'a [String],
+    pub state: RefCell<State<'a>>,
 }
 
 impl<'a> Interpreter<'a> {
@@ -144,43 +146,37 @@ impl<'a> Interpreter<'a> {
             locals: HashMap::default(),
             modules: Cell::new(HashMap::default()),
             module_contents: Cell::new(HashMap::default()),
+            module_interpreters: Cell::new(HashMap::default()),
+            state: RefCell::new(State::default()),
             paths,
         }
     }
 
-    pub fn run(&'a self, content: &'a [Statement<'a>]) -> Result<State<'a>, ProgramError<'a>> {
-        let mut current_state = State::default();
+    pub fn run(&'a self, content: &'a [Statement<'a>]) -> Result<(), ProgramError<'a>> {
         for s in content {
-            match self.evaluate(current_state, s) {
-                Ok((next_state, _)) => {
-                    current_state = next_state;
-                }
-                Err(e) => return Err(e),
-            }
+            self.evaluate(s)?;
         }
-        Ok(current_state)
+        Ok(())
     }
 
-    pub fn evaluate_expression(&'a self, state: State<'a>, expression: &'a Expression<'a>) -> EvaluationResult<'a> {
+    pub fn evaluate_expression(&'a self, expression: &'a Expression<'a>) -> EvaluationResult<'a> {
         match &expression.expression_type {
             ExpressionType::IsType {
                 value, checked_type
             } => {
-                let (s, value) = self.evaluate_expression(state, value)?;
-                self.is_value_type(&value, checked_type, s, &expression.location)
+                let value = self.evaluate_expression(value)?;
+                self.is_value_type(&value, checked_type, &expression.location)
             }
             ExpressionType::ModuleLiteral {
                 module,
                 field,
             } => {
-                let value = self.look_up_variable(expression.id(), module, &state)
+                let value = self.look_up_variable(expression.id(), module)
                     .ok_or_else(|| {
                         expression.create_program_error(&format!("Module `{}` not found!", module))
                     })?;
-                if let Value::Module(lm) = value {
-                    let (s, v) = self.evaluate_expression(lm.state.borrow().clone(), field)?;
-                    lm.state.replace(s);
-                    Ok((state, v))
+                if let Value::Module(module) = value {
+                    self.get_module_interpreter(module).evaluate_expression(field)
                 } else {
                     Err(expression.create_program_error(&format!("Variable `{}` is not a module", module)))
                 }
@@ -189,67 +185,60 @@ impl<'a> Interpreter<'a> {
                 array,
                 index,
                 value,
-            } => self.array_element_expression_set(array, index, value, state),
+            } => self.array_element_expression_set(array, index, value),
             ExpressionType::ArrayElement { array, index } => {
-                self.array_element_expression(array, index, state)
+                self.array_element_expression(array, index)
             }
             ExpressionType::RepeatedElementArray { element, length } => {
-                let (ns, element) = self.evaluate_expression(state, element)?;
-                let (ns, length) = self.evaluate_expression(ns, length)?;
+                let element = self.evaluate_expression(element)?;
+                let length = self.evaluate_expression(length)?;
                 if let Value::Integer { value: length } = length {
                     let elements = vec![Box::new(element); length as _];
-                    Ok((
-                        ns,
-                        Value::Array(Rc::new(RefCell::new(LoxArray {
-                            elements,
-                            capacity: length as _,
-                        }))),
-                    ))
+                    Ok(Value::Array(Rc::new(RefCell::new(LoxArray {
+                        elements,
+                        capacity: length as _,
+                    }))))
                 } else {
                     Err(expression.create_program_error("Array length should be an integer"))
                 }
             }
             ExpressionType::Array { elements } => {
-                let (next_state, elements) =
+                let elements =
                     elements
                         .iter()
-                        .try_fold((state, vec![]), |(s, mut elements), e| {
-                            let (ns, e) = self.evaluate_expression(s, e)?;
+                        .try_fold(vec![], |mut elements, e| {
+                            let e = self.evaluate_expression(e)?;
                             elements.push(Box::new(e));
-                            Ok((ns, elements))
+                            Ok(elements)
                         })?;
-                Ok((
-                    next_state,
-                    Value::Array(Rc::new(RefCell::new(LoxArray {
-                        capacity: elements.len(),
-                        elements,
-                    }))),
-                ))
+                Ok(Value::Array(Rc::new(RefCell::new(LoxArray {
+                    capacity: elements.len(),
+                    elements,
+                }))),
+                )
             }
             ExpressionType::Set {
                 callee,
                 property,
                 value,
-            } => self.set_property(state, callee, property, value),
+            } => self.set_property(callee, property, value),
             ExpressionType::Get { callee, property } => {
-                self.get_property(state, callee, property)
+                self.get_property(callee, property)
             }
-            ExpressionType::ExpressionLiteral { value } => Ok((state, value.into())),
-            ExpressionType::VariableLiteral { identifier } => {
-                let value = self.look_up_variable(expression.id(), identifier, &state)
+            ExpressionType::ExpressionLiteral { value } => Ok(value.into()),
+            ExpressionType::VariableLiteral { identifier } =>
+                self.look_up_variable(expression.id(), identifier)
                     .ok_or_else(|| {
                         expression.create_program_error(&format!("Variable `{}` not found!", identifier))
-                    })?;
-                Ok((state, value))
-            }
-            ExpressionType::Grouping { expression } => self.evaluate_expression(state, expression),
+                    }),
+            ExpressionType::Grouping { expression } => self.evaluate_expression(expression),
             ExpressionType::Unary {
                 operand,
                 operator: TokenType::Minus,
             } => {
-                let (s, v) = self.evaluate_expression(state, operand)?;
+                let v = self.evaluate_expression(operand)?;
                 if v.is_number() {
-                    Ok((s, -v))
+                    Ok(-v)
                 } else {
                     Err(expression.create_program_error("Can only negate numbers"))
                 }
@@ -257,7 +246,7 @@ impl<'a> Interpreter<'a> {
             ExpressionType::Unary {
                 operand,
                 operator: TokenType::Bang,
-            } => self.evaluate_expression(state, operand).map(|(s, v)| (s, !v)),
+            } => self.evaluate_expression(operand).map(|v| !v),
             ExpressionType::Unary { .. } => {
                 Err(expression.create_program_error("Invalid unary operator"))
             }
@@ -265,28 +254,27 @@ impl<'a> Interpreter<'a> {
                 left,
                 right,
                 operator: TokenType::Plus,
-            } => self.add_expressions(state, left, right, &expression.location),
+            } => self.add_expressions(left, right, &expression.location),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::Minus,
-            } => self.value_math_operation(state, left, right, &expression.location, i64::sub, f32::sub),
+            } => self.value_math_operation(left, right, &expression.location, i64::sub, f32::sub),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::Slash,
-            } => self.div_expressions(state, left, right, &expression.location),
+            } => self.div_expressions(left, right, &expression.location),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::Star,
-            } => self.value_math_operation(state, left, right, &expression.location, i64::mul, f32::mul),
+            } => self.value_math_operation(left, right, &expression.location, i64::mul, f32::mul),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::Greater,
             } => self.value_comparison_operation(
-                state,
                 left,
                 right,
                 &expression.location,
@@ -297,7 +285,6 @@ impl<'a> Interpreter<'a> {
                 right,
                 operator: TokenType::GreaterEqual,
             } => self.value_comparison_operation(
-                state,
                 left,
                 right,
                 &expression.location,
@@ -308,7 +295,6 @@ impl<'a> Interpreter<'a> {
                 right,
                 operator: TokenType::Less,
             } => self.value_comparison_operation(
-                state,
                 left,
                 right,
                 &expression.location,
@@ -319,7 +305,6 @@ impl<'a> Interpreter<'a> {
                 right,
                 operator: TokenType::LessEqual,
             } => self.value_comparison_operation(
-                state,
                 left,
                 right,
                 &expression.location,
@@ -329,18 +314,17 @@ impl<'a> Interpreter<'a> {
                 left,
                 right,
                 operator: TokenType::EqualEqual,
-            } => self.eq_expressions(state, left, right),
+            } => self.eq_expressions(left, right),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::BangEqual,
-            } => self.eq_expressions(state, left, right).map(|(s, v)| (s, !v)),
+            } => self.eq_expressions(left, right).map(|v| !v),
             ExpressionType::Binary {
                 left,
                 right,
                 operator: TokenType::And,
             } => self.boolean_expression(
-                state,
                 left,
                 right,
                 |left_value, right_value| {
@@ -356,7 +340,6 @@ impl<'a> Interpreter<'a> {
                 right,
                 operator: TokenType::Or,
             } => self.boolean_expression(
-                state,
                 left,
                 right,
                 |left_value, right_value| {
@@ -374,43 +357,41 @@ impl<'a> Interpreter<'a> {
                 condition,
                 then_branch,
                 else_branch,
-            } => self.conditional_expression(state, condition, then_branch, else_branch),
+            } => self.conditional_expression(condition, then_branch, else_branch),
             ExpressionType::VariableAssignment {
                 expression: value,
                 identifier,
             } => self.variable_assignment(
-                state,
                 identifier,
                 expression.id(),
                 value,
                 &expression.location,
             ),
             ExpressionType::Call { callee, arguments } => {
-                self.call_expression(state, callee, arguments)
+                self.call_expression(callee, arguments)
             }
             ExpressionType::AnonymousFunction { arguments, body } => {
                 let f = Value::Function(Rc::new(LoxFunction {
                     arguments: arguments.to_vec(),
                     body: body.iter().collect(),
-                    environments: state.get_environments(),
+                    environments: self.state.borrow().get_environments(),
                     location: expression.location.clone(),
                 }));
-                Ok((state, f))
+                Ok(f)
             }
         }
     }
     pub(crate) fn evaluate(
         &'a self,
-        mut state: State<'a>,
         statement: &'a Statement<'a>,
     ) -> EvaluationResult<'a> {
-        let state = match &statement.statement_type {
-            StatementType::EOF => state,
+        match &statement.statement_type {
+            StatementType::EOF => {},
             StatementType::Module {
                 name, statements
             } => {
                 unsafe { self.modules.as_ptr().as_mut() }.unwrap().insert(*name, statements.clone());
-                self.process_module(state, name)?
+                self.process_module(name)?;
             },
             StatementType::Import { name, } => {
                 let statements = self.resolve_import(name, &statement.location)?
@@ -418,48 +399,44 @@ impl<'a> Interpreter<'a> {
                     .map(Box::new)
                     .collect();
                 unsafe { self.modules.as_ptr().as_mut() }.unwrap().insert(*name, statements);
-                self.process_module(state, name)?
+                self.process_module(name)?;
             }
             StatementType::If {
                 condition,
                 then,
                 otherwise,
             } => {
-                let (s, cond_value) = self.evaluate_expression(state, condition)?;
+                let cond_value = self.evaluate_expression(condition)?;
                 if cond_value.is_truthy() {
-                    self.evaluate(s, then)?.0
+                    self.evaluate(then)?;
                 } else if let Some(o) = otherwise {
-                    self.evaluate(s, o)?.0
-                } else {
-                    s
+                    self.evaluate(o)?;
                 }
             }
-            StatementType::Expression { expression } => self.evaluate_expression(state, expression)?.0,
+            StatementType::Expression { expression } => {
+                self.evaluate_expression(expression)?;
+            },
             StatementType::Block { body } => {
-                state.push();
+                self.state.borrow_mut().push();
                 for st in body {
-                    let (s, _) = self.evaluate(state, st)?;
-                    state = s;
-                    if state.broke_loop {
+                    self.evaluate(st)?;
+                    if self.state.borrow().broke_loop {
                         break;
                     }
                 }
-                state.pop();
-                state
+                self.state.borrow_mut().pop();
             }
             StatementType::VariableDeclaration { expression, name } => {
-                let (mut s, v) = if let Some(e) = expression {
-                    self.evaluate_expression(state, e)?
+                let v = if let Some(e) = expression {
+                    self.evaluate_expression(e)?
                 } else {
-                    (state, Value::Uninitialized)
+                    Value::Uninitialized
                 };
-                s.insert_top(name, v);
-                s
+                self.state.borrow_mut().insert_top(name, v);
             }
             StatementType::PrintStatement { expression } => {
-                let (s, v) = self.evaluate_expression(state, expression)?;
+                let v = self.evaluate_expression(expression)?;
                 println!("{}", v);
-                s
             }
             StatementType::TraitDeclaration {
                 name,
@@ -468,7 +445,7 @@ impl<'a> Interpreter<'a> {
                 setters,
                 getters,
             } => {
-                state.insert_top(
+                self.state.borrow_mut().insert_top(
                     name,
                     Value::Trait(Rc::new(LoxTrait {
                         name,
@@ -478,7 +455,6 @@ impl<'a> Interpreter<'a> {
                         getters: getters.clone(),
                     })),
                 );
-                state
             }
             StatementType::TraitImplementation {
                 class_name,
@@ -488,11 +464,8 @@ impl<'a> Interpreter<'a> {
                 static_methods,
                 trait_name,
             } => {
-                if let (state, Value::Class(class)) = self.evaluate_expression(state, class_name)? {
-                    if let (
-                        ns,
-                        Value::Trait(t),
-                    ) = self.evaluate_expression(state, trait_name)?
+                if let Value::Class(class) = self.evaluate_expression(class_name)? {
+                    if let Value::Trait(t) = self.evaluate_expression(trait_name)?
                     {
                         if class.implements(t.name) {
                             return Err(statement.create_program_error(
@@ -508,7 +481,7 @@ impl<'a> Interpreter<'a> {
                             .collect::<Vec<&_>>();
                         let getters = &getters.iter().map(|s| s.as_ref()).collect::<Vec<&_>>();
                         let setters = &setters.iter().map(|s| s.as_ref()).collect::<Vec<&_>>();
-                        let envs = ns.get_environments();
+                        let envs = self.state.borrow().get_environments();
                         check_trait_methods(methods, &t.methods, &statement.location)
                             .map_err(|ee| ee[0].clone())?;
                         class.append_methods(methods, envs.clone());
@@ -521,7 +494,6 @@ impl<'a> Interpreter<'a> {
                         check_trait_methods(setters, &t.setters, &statement.location)
                             .map_err(|ee| ee[0].clone())?;
                         class.append_setters(setters, envs.clone());
-                        ns
                     } else {
                         return Err(class_name
                             .create_program_error("You can implement traits only on classes"));
@@ -540,17 +512,18 @@ impl<'a> Interpreter<'a> {
                 static_methods,
                 superclass,
             } => {
-                let (mut state, superclass) = if let Some(e) = superclass {
-                    let (s, superclass) = self.evaluate_expression(state, e)?;
+                let superclass = if let Some(e) = superclass {
+                    let superclass = self.evaluate_expression(e)?;
                     if let Value::Class(c) = superclass {
-                        (s, Some(c))
+                        Some(c)
                     } else {
                         return Err(statement.create_program_error("Superclass must be a class"));
                     }
                 } else {
-                    (state, None)
+                    None
                 };
-                state.insert_top(
+                let environments = self.state.borrow().get_environments();
+                self.state.borrow_mut().insert_top(
                     name.to_owned(),
                     Value::Class(Rc::new(LoxClass::new(
                         name.to_owned(),
@@ -571,62 +544,56 @@ impl<'a> Interpreter<'a> {
                             .map(|s| s.as_ref())
                             .collect::<Vec<&Statement>>(),
                         superclass,
-                        state.get_environments(),
+                        environments,
                     ))),
                 );
-                state
             }
             StatementType::FunctionDeclaration {
                 name,
                 arguments,
                 body,
             } => {
-                state.insert(
+                let environments = self.state.borrow().get_environments();
+                self.state.borrow_mut().insert(
                     name,
                     Value::Function(Rc::new(LoxFunction {
                         arguments: arguments.clone(),
-                        environments: state.get_environments(),
                         body: body.into_iter().map(AsRef::as_ref).collect(),
                         location: statement.location.clone(),
+                        environments,
                     })),
                 );
-                state
             }
-            StatementType::Return { value } if state.in_function => match value {
-                None => state,
+            StatementType::Return { value } if self.state.borrow().in_function => match value {
+                None => {},
                 Some(e) => {
-                    let (mut s, v) = self.evaluate_expression(state, e)?;
-                    s.add_return_value(v);
-                    s
+                    let v = self.evaluate_expression(e)?;
+                    self.state.borrow_mut().add_return_value(v);
                 }
             },
             StatementType::Return { .. } =>
                 return Err(statement.create_program_error("Return outside function")),
             StatementType::While { condition, action } => {
-                state.loop_count += 1;
+                self.state.borrow_mut().loop_count += 1;
                 while {
-                    let (s, v) = self.evaluate_expression(state, condition)?;
-                    state = s;
-                    state.loop_count > 0 && v.is_truthy()
+                    let v = self.evaluate_expression(condition)?;
+                    self.state.borrow().loop_count > 0 && v.is_truthy()
                 } {
-                    let (s, _) = self.evaluate(state, action)?;
-                    state = s;
-                    if state.broke_loop {
+                    self.evaluate(action)?;
+                    if self.state.borrow().broke_loop {
                         break;
                     }
                 }
-                state.loop_count -= 1;
-                state.broke_loop = false;
-                state
+                self.state.borrow_mut().loop_count -= 1;
+                self.state.borrow_mut().broke_loop = false;
             }
-            StatementType::Break if state.loop_count > 0 => {
-                state.broke_loop = true;
-                state
+            StatementType::Break if self.state.borrow().loop_count > 0 => {
+                self.state.borrow_mut().broke_loop = true;
             }
             StatementType::Break =>
                 return Err(statement.create_program_error("Break outside loop")),
         };
-        Ok((state, Value::Nil))
+        Ok(Value::Nil)
     }
 
     fn get_module_content(&'a self, name: &'a str) -> &'a str {
@@ -638,6 +605,14 @@ impl<'a> Interpreter<'a> {
         name: &'a str,
     ) -> &'a [Box<Statement<'a>>] {
         unsafe { self.modules.as_ptr().as_ref() }.unwrap().get(name).unwrap()
+    }
+
+
+    fn get_module_interpreter(
+        &'a self,
+        name: &'a str,
+    ) -> &'a Box<Interpreter<'a>> {
+        unsafe { self.module_interpreters.as_ptr().as_ref() }.unwrap().get(name).unwrap()
     }
 
     fn open_import(
@@ -684,25 +659,23 @@ impl<'a> Interpreter<'a> {
 
     fn process_module<'b>(
         &'a self,
-        mut state: State<'a>,
         name: &'a str,
-    ) -> Result<State<'a>, ProgramError<'a>> {
+    ) -> Result<(), ProgramError<'a>> {
         let statements = self.get_module_statements(name);
-        self.blacklist.borrow_mut().push(name);
-        let module_state: State = statements.iter()
-            .try_fold(State::default(), |state, statement| {
-                Ok(self.evaluate(state, statement)?.0)
-            })?;
-        self.blacklist.borrow_mut().pop();
-        state.insert_top(name, Value::Module(Rc::new(LoxModule {
-            state: RefCell::new(module_state),
-        })));
-        Ok(state)
+        let mut interpreter = Interpreter::new(&self.paths, name);
+        interpreter.locals = self.locals.clone();
+        interpreter.blacklist.borrow_mut().extend(&*self.blacklist.borrow());
+        unsafe { self.module_interpreters.as_ptr().as_mut() }.unwrap().insert(name, Box::new(interpreter));
+        for statement in statements {
+            self.get_module_interpreter(name)
+                .evaluate(statement)?;
+        }
+        self.state.borrow_mut().insert_top(name, Value::Module(name));
+        Ok(())
     }
 
     fn variable_assignment(
         &'a self,
-        state: State<'a>,
         name: &'a str,
         id: usize,
         expression: &'a Expression<'a>,
@@ -710,9 +683,9 @@ impl<'a> Interpreter<'a> {
     ) -> EvaluationResult<'a> {
         match self.locals.get(&id) {
             Some(env) => {
-                let (s, value) = self.evaluate_expression(state, expression)?;
-                s.assign_at(*env, name, &value);
-                Ok((s, value))
+                let value = self.evaluate_expression(expression)?;
+                self.state.borrow_mut().assign_at(*env, name, &value);
+                Ok(value)
             }
             None => Err(ProgramError {
                 location: location.clone(),
@@ -723,23 +696,20 @@ impl<'a> Interpreter<'a> {
 
     fn call_expression(
         &'a self,
-        state: State<'a>,
         callee: &'a Expression<'a>,
         arguments: &'a [Box<Expression<'a>>],
     ) -> EvaluationResult<'a> {
-        let (next_state, function_value) = self.evaluate_expression(state, callee)?;
+        let function_value = self.evaluate_expression(callee)?;
         match function_value {
             Value::Class(c) => {
                 let instance = LoxObject::new(c);
                 let mut values = vec![];
-                let mut current_state = next_state;
                 for e in arguments {
-                    let (value_status, value) = self.evaluate_expression(current_state, e)?;
-                    current_state = value_status;
+                    let value = self.evaluate_expression(e)?;
                     values.push(value);
                 }
                 instance.init(&values, &self, &callee.location)?;
-                Ok((current_state, Value::Object(instance)))
+                Ok(Value::Object(instance))
             }
             Value::Function(f) if f.arguments.len() != arguments.len() => Err(callee
                 .create_program_error(
@@ -761,23 +731,19 @@ impl<'a> Interpreter<'a> {
                 )),
             Value::Method(f, this) => {
                 let mut values = vec![Value::Object(this)];
-                let mut current_state = next_state;
                 for e in arguments {
-                    let (value_status, value) = self.evaluate_expression(current_state, e)?;
-                    current_state = value_status;
+                    let value = self.evaluate_expression(e)?;
                     values.push(value);
                 }
-                f.eval(&values, &self).map(|v| (current_state, v))
+                f.eval(&values, &self)
             }
             Value::Function(f) => {
                 let mut values = vec![];
-                let mut current_state = next_state;
                 for e in arguments {
-                    let (value_status, value) = self.evaluate_expression(current_state, e)?;
-                    current_state = value_status;
+                    let value = self.evaluate_expression(e)?;
                     values.push(value);
                 }
-                f.eval(&values, &self).map(|v| (current_state, v))
+                f.eval(&values, &self)
             }
             _ => Err(callee.create_program_error("Only functions or classes can be called!")),
         }
@@ -785,13 +751,12 @@ impl<'a> Interpreter<'a> {
 
     fn conditional_expression(
         &'a self,
-        state: State<'a>,
         condition: &'a Expression<'a>,
         then_branch: &'a Expression<'a>,
         else_branch: &'a Expression<'a>,
     ) -> EvaluationResult<'a> {
-        let (s, condition) = self.evaluate_expression(state, condition)?;
-        self.evaluate_expression(s,
+        let condition = self.evaluate_expression(condition)?;
+        self.evaluate_expression(
              if condition.is_truthy() {
                  then_branch
              } else {
@@ -802,72 +767,62 @@ impl<'a> Interpreter<'a> {
 
     fn boolean_expression(
         &'a self,
-        state: State<'a>,
         left: &'a Expression<'a>,
         right: &'a Expression<'a>,
         op: fn(Value<'a>, Value<'a>) -> Value<'a>,
     ) -> EvaluationResult<'a> {
-        let (s, left_value) = self.evaluate_expression(state, left)?;
-        let (final_state, right_value) = self.evaluate_expression(s, right)?;
-        Ok((final_state, op(left_value, right_value)))
+        let left_value = self.evaluate_expression(left)?;
+        let right_value = self.evaluate_expression(right)?;
+        Ok(op(left_value, right_value))
     }
 
     fn value_comparison_operation(
         &'a self,
-        state: State<'a>,
         left: &'a Expression<'a>,
         right: &'a Expression<'a>,
         location: &SourceCodeLocation<'a>,
         op: fn(f32, f32) -> bool,
     ) -> EvaluationResult<'a> {
-        let (s, left_value) = self.evaluate_expression(state, left)?;
-        let (final_state, right_value) = self.evaluate_expression(s, right)?;
+        let left_value = self.evaluate_expression(left)?;
+        let right_value = self.evaluate_expression(right)?;
         comparison_operation(left_value, right_value, op)
-            .map(|v| (final_state, v))
             .map_err(|e| e.into_program_error(location))
     }
 
     fn eq_expressions(
         &'a self,
-        state: State<'a>,
         left: &'a Expression<'a>,
         right: &'a Expression<'a>,
     ) -> EvaluationResult<'a> {
-        let (next_state, left_value) = self.evaluate_expression(state, left)?;
-        let (final_state, right_value) = self.evaluate_expression(next_state, right)?;
-        Ok((
-            final_state,
-            Value::Boolean {
-                value: left_value == right_value,
-            },
-        ))
+        let left_value = self.evaluate_expression(left)?;
+        let right_value = self.evaluate_expression(right)?;
+        Ok(Value::Boolean {
+            value: left_value == right_value,
+        })
     }
 
     fn value_math_operation(
         &'a self,
-        state: State<'a>,
         left: &'a Expression<'a>,
         right: &'a Expression<'a>,
         location: &SourceCodeLocation<'a>,
         i64_op: fn(i64, i64) -> i64,
         f32_op: fn(f32, f32) -> f32,
     ) -> EvaluationResult<'a> {
-        let (s, left_value) = self.evaluate_expression(state, left)?;
-        let (final_state, right_value) = self.evaluate_expression(s, right)?;
+        let left_value = self.evaluate_expression(left)?;
+        let right_value = self.evaluate_expression(right)?;
         math_operation(left_value, right_value, i64_op, f32_op)
-            .map(|v| (final_state, v))
             .map_err(|e| e.into_program_error(location))
     }
 
     fn div_expressions(
         &'a self,
-        state: State<'a>,
         left: &'a Expression<'a>,
         right: &'a Expression<'a>,
         location: &SourceCodeLocation<'a>,
     ) -> EvaluationResult<'a> {
-        let (s, left_value) = self.evaluate_expression(state, left)?;
-        let (final_state, right_value) = self.evaluate_expression(s, right)?;
+        let left_value = self.evaluate_expression(left)?;
+        let right_value = self.evaluate_expression(right)?;
         match right_value {
             Value::Float { value } if value == 0f32 => {
                 Err(right.create_program_error("Division by zero!"))
@@ -878,54 +833,47 @@ impl<'a> Interpreter<'a> {
             _ => Ok(()),
         }?;
         math_operation(left_value, right_value, i64::div, f32::div)
-            .map(|v| (final_state, v))
             .map_err(|e| e.into_program_error(&location))
     }
 
     fn add_expressions(
         &'a self,
-        state: State<'a>,
         left: &'a Expression<'a>,
         right: &'a Expression<'a>,
         location: &SourceCodeLocation<'a>,
     ) -> EvaluationResult<'a> {
-        let (s, left_value) = self.evaluate_expression(state, left)?;
+        let left_value = self.evaluate_expression(left)?;
         if left_value.is_number() {
-            let (final_state, right_value) = self.evaluate_expression(s, right)?;
+            let right_value = self.evaluate_expression(right)?;
             math_operation(left_value, right_value, i64::add, f32::add)
-                .map(|v| (final_state, v))
                 .map_err(|e| e.into_program_error(location))
         } else {
             let left_string: String = left_value
                 .try_into()
                 .map_err(|e: ValueError| e.into_program_error(location))?;
-            let (final_state, right_value) = self.evaluate_expression(s, right)?;
+            let right_value = self.evaluate_expression(right)?;
             let right_string: String = right_value
                 .try_into()
                 .map_err(|e: ValueError| e.into_program_error(location))?;
-            Ok((
-                final_state,
-                Value::String {
-                    value: format!("{}{}", left_string, right_string),
-                },
-            ))
+            Ok(Value::String {
+                value: format!("{}{}", left_string, right_string),
+            })
         }
     }
 
     fn get_property(
         &'a self,
-        state: State<'a>,
         callee: &'a Expression<'a>,
         property: &'a str,
     ) -> EvaluationResult<'a> {
-        let (next_state, object) = self.evaluate_expression(state, callee)?;
+        let object = self.evaluate_expression(callee)?;
         match object {
             Value::Object(instance) => {
                 if let Some(v) = instance.get(property) {
-                    Ok((next_state, v))
+                    Ok(v)
                 } else {
                     if let Some(v) = instance.get_getter(property) {
-                        v.eval(&[Value::Object(instance)], &self).map(|v| (next_state, v))
+                        v.eval(&[Value::Object(instance)], &self)
                     } else {
                         Err(callee
                             .create_program_error(format!("Undefined property {}.", property).as_str()))
@@ -934,7 +882,7 @@ impl<'a> Interpreter<'a> {
             }
             Value::Class(c) => {
                 if let Some(v) = c.static_instance.get(property) {
-                    Ok((next_state, v))
+                    Ok(v)
                 } else {
                     Err(callee
                         .create_program_error(format!("Undefined property {}.", property).as_str()))
@@ -946,19 +894,18 @@ impl<'a> Interpreter<'a> {
 
     fn set_property(
         &'a self,
-        state: State<'a>,
         callee: &'a Expression<'a>,
         property: &'a str,
         value: &'a Expression<'a>,
     ) -> EvaluationResult<'a> {
-        let (ts, object) = self.evaluate_expression(state, callee)?;
+        let object = self.evaluate_expression(callee)?;
         if let Value::Object(instance) = object {
-            let (final_state, value) = self.evaluate_expression(ts, value)?;
+            let value = self.evaluate_expression(value)?;
             if let Some(f) = instance.get_setter(property) {
-                f.eval(&[Value::Object(instance), value], &self).map(|v| (final_state, v))
+                f.eval(&[Value::Object(instance), value], &self)
             } else {
                 instance.set(property, value.clone());
-                Ok((final_state, value))
+                Ok(value)
             }
         } else {
             Err(callee.create_program_error("Only instances have properties"))
@@ -970,13 +917,12 @@ impl<'a> Interpreter<'a> {
         array: &'a Expression<'a>,
         index: &'a Expression<'a>,
         value: &'a Expression<'a>,
-        state: State<'a>,
     ) -> EvaluationResult<'a> {
         self.array_element_operation(
-            array, index, state, |ns, array, index_value| {
-                let (ns, value) = self.evaluate_expression(ns, value)?;
+            array, index, |array, index_value| {
+                let value = self.evaluate_expression(value)?;
                 array.borrow_mut().elements[index_value] = Box::new(value.clone());
-                Ok((ns, value))
+                Ok(value)
             }
         )
     }
@@ -985,30 +931,28 @@ impl<'a> Interpreter<'a> {
         &'a self,
         array: &'a Expression<'a>,
         index: &'a Expression<'a>,
-        state: State<'a>,
     ) -> EvaluationResult<'a> {
         self.array_element_operation(
-            array, index, state, |ns, array, index_value| {
-                Ok((ns, *array.borrow().elements[index_value].clone()))
+            array, index, |array, index_value| {
+                Ok(*array.borrow().elements[index_value].clone())
             }
         )
     }
 
-    fn array_element_operation<I: Fn(State<'a>, Rc<RefCell<LoxArray<'a>>>, usize) -> EvaluationResult<'a>>(
+    fn array_element_operation<I: Fn(Rc<RefCell<LoxArray<'a>>>, usize) -> EvaluationResult<'a>>(
         &'a self,
         array: &'a Expression<'a>,
         index: &'a Expression<'a>,
-        state: State<'a>,
         op: I,
     ) -> EvaluationResult<'a> {
-        let (ns, array_value) = self.evaluate_expression(state, array)?;
+        let array_value = self.evaluate_expression(array)?;
         if let Value::Array(a) = array_value {
-            let (ns, index_value) = self.evaluate_expression(ns, index)?;
+            let index_value = self.evaluate_expression(index)?;
             let index_value: i64 = i64::try_from(index_value).map_err(|e: ValueError| index.create_program_error(
                 e.to_string().as_str(),
             ))?;
             if (index_value as usize) < a.borrow().capacity {
-                op(ns, a, index_value as usize)
+                op(a, index_value as usize)
             } else {
                 Err(index.create_program_error(
                     format!(
@@ -1027,12 +971,11 @@ impl<'a> Interpreter<'a> {
         &'a self,
         expression_id: usize,
         name: &str,
-        state: &State<'a>,
     ) -> Option<Value<'a>> {
         if let Some(env) = self.locals.get(&expression_id) {
-            state.get_at(name, *env)
+            self.state.borrow().get_at(name, *env)
         } else {
-            state.get_global(name)
+            self.state.borrow().get_global(name)
         }
     }
 
@@ -1040,38 +983,37 @@ impl<'a> Interpreter<'a> {
         &'a self,
         value: &Value<'a>,
         checked_type: &'a Type<'a>,
-        state: State<'a>,
         location: &SourceCodeLocation<'a>,
     ) -> EvaluationResult<'a> {
         match (value, checked_type) {
-            (Value::Nil, Type::Nil) => Ok((state, Value::Boolean { value: true })),
-            (Value::Nil, _) => Ok((state, Value::Boolean { value: false })),
-            (Value::Boolean { .. }, Type::Boolean) => Ok((state, Value::Boolean { value: true })),
-            (Value::Boolean { .. }, _) => Ok((state, Value::Boolean { value: false })),
-            (Value::Integer { .. }, Type::Integer) => Ok((state, Value::Boolean { value: true })),
-            (Value::Integer { .. }, _) => Ok((state, Value::Boolean { value: false })),
-            (Value::Float { .. }, Type::Float) => Ok((state, Value::Boolean { value: true })),
-            (Value::Float { .. }, _) => Ok((state, Value::Boolean { value: false })),
-            (Value::Module { .. }, Type::Module) => Ok((state, Value::Boolean { value: true })),
-            (Value::Module { .. }, _) => Ok((state, Value::Boolean { value: false })),
-            (Value::String { .. }, Type::String) => Ok((state, Value::Boolean { value: true })),
-            (Value::String { .. }, _) => Ok((state, Value::Boolean { value: false })),
-            (Value::Array { .. }, Type::Array) => Ok((state, Value::Boolean { value: true })),
-            (Value::Array { .. }, _) => Ok((state, Value::Boolean { value: false })),
-            (Value::Function(_), Type::Function) => Ok((state, Value::Boolean { value: true })),
-            (Value::Function(_), _) => Ok((state, Value::Boolean { value: false })),
-            (Value::Trait { .. }, Type::Trait) => Ok((state, Value::Boolean { value: true })),
-            (Value::Trait { .. }, _) => Ok((state, Value::Boolean { value: false })),
-            (Value::Class(_), Type::Class) => Ok((state, Value::Boolean { value: true })),
-            (Value::Class(_), _) => Ok((state, Value::Boolean { value: false })),
+            (Value::Nil, Type::Nil) => Ok(Value::Boolean { value: true }),
+            (Value::Nil, _) => Ok(Value::Boolean { value: false }),
+            (Value::Boolean { .. }, Type::Boolean) => Ok(Value::Boolean { value: true }),
+            (Value::Boolean { .. }, _) => Ok(Value::Boolean { value: false }),
+            (Value::Integer { .. }, Type::Integer) => Ok(Value::Boolean { value: true }),
+            (Value::Integer { .. }, _) => Ok(Value::Boolean { value: false }),
+            (Value::Float { .. }, Type::Float) => Ok(Value::Boolean { value: true }),
+            (Value::Float { .. }, _) => Ok(Value::Boolean { value: false }),
+            (Value::Module { .. }, Type::Module) => Ok(Value::Boolean { value: true }),
+            (Value::Module { .. }, _) => Ok(Value::Boolean { value: false }),
+            (Value::String { .. }, Type::String) => Ok(Value::Boolean { value: true }),
+            (Value::String { .. }, _) => Ok(Value::Boolean { value: false }),
+            (Value::Array { .. }, Type::Array) => Ok(Value::Boolean { value: true }),
+            (Value::Array { .. }, _) => Ok(Value::Boolean { value: false }),
+            (Value::Function(_), Type::Function) => Ok(Value::Boolean { value: true }),
+            (Value::Function(_), _) => Ok(Value::Boolean { value: false }),
+            (Value::Trait { .. }, Type::Trait) => Ok(Value::Boolean { value: true }),
+            (Value::Trait { .. }, _) => Ok(Value::Boolean { value: false }),
+            (Value::Class(_), Type::Class) => Ok(Value::Boolean { value: true }),
+            (Value::Class(_), _) => Ok(Value::Boolean { value: false }),
             (Value::Object(obj), Type::UserDefined(c)) => {
-                let (s, v) = self.evaluate_expression(state, c)?;
+                let v = self.evaluate_expression(c)?;
                 match v {
                     Value::Class(lox_class) => {
-                        Ok((s, Value::Boolean { value: is_class(&lox_class, obj) }))
+                        Ok(Value::Boolean { value: is_class(&lox_class, obj) })
                     }
                     Value::Trait(t) => {
-                        Ok((s, Value::Boolean { value: is_trait(&t.name, obj) }))
+                        Ok(Value::Boolean { value: is_trait(&t.name, obj) })
                     }
                     _ => Err(ProgramError {
                         location: c.location.clone(),
@@ -1079,7 +1021,7 @@ impl<'a> Interpreter<'a> {
                     })
                 }
             },
-            (Value::Object(_), _) => Ok((state, Value::Boolean { value: false })),
+            (Value::Object(_), _) => Ok(Value::Boolean { value: false }),
             _ => Err(ProgramError {
                 location: location.clone(),
                 message: "Invalid value to check for type".to_owned(),
@@ -1122,6 +1064,7 @@ mod test_statement {
     };
     use super::common_test::{create_expression, get_variable};
     use crate::interpreter::Interpreter;
+    use std::cell::RefCell;
 
     #[test]
     fn test_if_statement() {
@@ -1151,8 +1094,9 @@ mod test_statement {
         };
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 2.0 });
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Float { value: 1.0 }));
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        assert_eq!(interpreter.state.borrow().find("identifier"), Some(Value::Float { value: 1.0 }));
     }
 
     #[test]
@@ -1183,8 +1127,9 @@ mod test_statement {
         };
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 2.0 });
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        assert_eq!(interpreter.state.borrow().find("identifier"), Some(Value::Float { value: 0.0 }));
     }
 
     #[test]
@@ -1200,8 +1145,9 @@ mod test_statement {
         let statement = create_variable_assignment_statement("identifier", 0.0, &location);
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 2.0 });
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        assert_eq!(interpreter.state.borrow().find("identifier"), Some(Value::Float { value: 0.0 }));
     }
 
     #[test]
@@ -1240,10 +1186,11 @@ mod test_statement {
         state.insert("identifier", Value::Float { value: 2.0 });
         state.insert("identifier1", Value::Float { value: 2.0 });
         state.insert("identifier2", Value::Float { value: 0.0 });
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Float { value: 0.0 }));
-        assert_eq!(s.find("identifier1"), Some(Value::Float { value: 1.0 }));
-        assert_eq!(s.find("identifier2"), Some(Value::Float { value: 2.0 }));
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        assert_eq!(interpreter.state.borrow().find("identifier"), Some(Value::Float { value: 0.0 }));
+        assert_eq!(interpreter.state.borrow().find("identifier1"), Some(Value::Float { value: 1.0 }));
+        assert_eq!(interpreter.state.borrow().find("identifier2"), Some(Value::Float { value: 2.0 }));
     }
 
     #[test]
@@ -1252,7 +1199,7 @@ mod test_statement {
             line: 1,
             file: "",
         };
-        let interpreter = Interpreter::new(&[], "");
+        let mut interpreter = Interpreter::new(&[], "");
         let statement = Statement {
             statement_type: StatementType::VariableDeclaration {
                 expression: Some(create_expression_number(1.0, &location)),
@@ -1261,8 +1208,9 @@ mod test_statement {
             location,
         };
         let state = State::default();
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Float { value: 1.0 }));
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        assert_eq!(interpreter.state.borrow().find("identifier"), Some(Value::Float { value: 1.0 }));
     }
 
     #[test]
@@ -1271,7 +1219,7 @@ mod test_statement {
             line: 1,
             file: "",
         };
-        let interpreter = Interpreter::new(&[], "");
+        let mut interpreter = Interpreter::new(&[], "");
         let statement = Statement {
             statement_type: StatementType::FunctionDeclaration {
                 name: "function",
@@ -1284,8 +1232,9 @@ mod test_statement {
             location: location.clone(),
         };
         let state = State::default();
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        let value = s.find("function").unwrap();
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        let value = interpreter.state.borrow().find("function").unwrap();
         match value {
             Value::Function(lf ) => {
                 assert_eq!(lf.arguments, Vec::<String>::new());
@@ -1314,11 +1263,12 @@ mod test_statement {
             },
             location,
         };
-        let interpreter = Interpreter::new(&[], "");
+        let mut interpreter = Interpreter::new(&[], "");
         let mut state = State::default();
         state.in_function = true;
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        assert_eq!(s.return_value, Some(Box::new(Value::Float { value: 1.0 })));
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        assert_eq!(interpreter.state.borrow().return_value, Some(Box::new(Value::Float { value: 1.0 })));
     }
 
     #[test]
@@ -1327,7 +1277,7 @@ mod test_statement {
             line: 1,
             file: "",
         };
-        let interpreter = Interpreter::new(&[], "");
+        let mut interpreter = Interpreter::new(&[], "");
         let statement = Statement {
             statement_type: StatementType::Return {
                 value: Some(create_expression_number(1.0, &location)),
@@ -1335,7 +1285,8 @@ mod test_statement {
             location: location.clone(),
         };
         let state = State::default();
-        let r = interpreter.evaluate(state, &statement);
+        interpreter.state = RefCell::new(state);
+        let r = interpreter.evaluate(&statement);
         assert_eq!(
             r,
             Err(ProgramError {
@@ -1355,12 +1306,13 @@ mod test_statement {
             statement_type: StatementType::Break,
             location,
         };
-        let interpreter = Interpreter::new(&[], "");
+        let mut interpreter = Interpreter::new(&[], "");
         let mut state = State::default();
         state.loop_count = 1;
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        assert!(s.broke_loop);
-        assert_eq!(s.loop_count, 1);
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        assert!(interpreter.state.borrow().broke_loop);
+        assert_eq!(interpreter.state.borrow().loop_count, 1);
     }
 
     #[test]
@@ -1374,8 +1326,7 @@ mod test_statement {
             location: location.clone(),
         };
         let interpreter = Interpreter::new(&[], "");
-        let state = State::default();
-        let r = interpreter.evaluate(state, &statement);
+        let r = interpreter.evaluate(&statement);
         assert_eq!(
             r,
             Err(ProgramError {
@@ -1430,8 +1381,9 @@ mod test_statement {
         };
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 0.0 });
-        let (s, _) = interpreter.evaluate(state, &statement).unwrap();
-        assert_eq!(s.find("identifier"), Some(Value::Float { value: 10.0 }));
+        interpreter.state = RefCell::new(state);
+        interpreter.evaluate(&statement).unwrap();
+        assert_eq!(interpreter.state.borrow().find("identifier"), Some(Value::Float { value: 10.0 }));
     }
 
     fn create_variable_assignment_statement<'a>(
@@ -1476,6 +1428,7 @@ mod test_expression {
     };
     use super::common_test::{create_expression, get_variable};
     use std::rc::Rc;
+    use std::cell::RefCell;
 
     #[test]
     fn test_expression_literal() {
@@ -1483,12 +1436,9 @@ mod test_expression {
             line: 1,
             file: "",
         };
-        let state = State::default();
         let interpreter = Interpreter::new(&[], "");
         let e = get_number(1.0, &location);
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &e)
-            .unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&e).unwrap();
         assert_eq!(got, Value::Float { value: 1.0 });
     }
 
@@ -1500,10 +1450,10 @@ mod test_expression {
         };
         let expression = get_variable("variable", &location);
         let mut state = State::default();
-        let interpreter = Interpreter::new(&[], "");
+        let mut interpreter = Interpreter::new(&[], "");
         state.insert("variable", Value::Float { value: 1.0 });
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        interpreter.state = RefCell::new(state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 1.0 });
     }
 
@@ -1520,9 +1470,9 @@ mod test_expression {
             location,
         );
         let state = State::default();
-        let interpreter = Interpreter::new(&[], "");
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let mut interpreter = Interpreter::new(&[], "");
+        interpreter.state = RefCell::new(state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 1.0 });
     }
 
@@ -1540,9 +1490,7 @@ mod test_expression {
             location,
         );
         let interpreter = Interpreter::new(&[], "");
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: -1.0 });
     }
 
@@ -1560,9 +1508,7 @@ mod test_expression {
             location,
         );
         let interpreter = Interpreter::new(&[], "");
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: false });
     }
 
@@ -1581,9 +1527,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 2.0 });
     }
 
@@ -1601,10 +1545,8 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
         let interpreter = Interpreter::new(&[], "");
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(
             got,
             Value::String {
@@ -1628,9 +1570,7 @@ mod test_expression {
             location,
         );
         let interpreter = Interpreter::new(&[], "");
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 0.0 });
     }
 
@@ -1649,9 +1589,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 2.0 });
     }
 
@@ -1670,9 +1608,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 1.0 });
     }
 
@@ -1691,9 +1627,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1712,9 +1646,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1733,9 +1665,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1754,9 +1684,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1775,9 +1703,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1796,9 +1722,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1817,9 +1741,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1838,9 +1760,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1859,9 +1779,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1880,9 +1798,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Boolean { value: true });
     }
 
@@ -1901,9 +1817,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 1.0 });
     }
 
@@ -1922,9 +1836,7 @@ mod test_expression {
             },
             location,
         );
-        let state = State::default();
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        assert_eq!(state, final_state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 2.0 });
     }
 
@@ -1947,9 +1859,8 @@ mod test_expression {
         );
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 0.0 });
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        state.insert("identifier", Value::Float { value: 1.0 });
-        assert_eq!(state, final_state);
+        interpreter.state = RefCell::new(state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Float { value: 1.0 });
     }
 
@@ -1967,7 +1878,7 @@ mod test_expression {
             location.clone(),
         );
         let mut state = State::default();
-        let interpreter = Interpreter::new(&[], "");
+        let mut interpreter = Interpreter::new(&[], "");
         let s = Statement {
             statement_type: StatementType::VariableDeclaration {
                 expression: Some(get_number(1.0, &location)),
@@ -1985,10 +1896,8 @@ mod test_expression {
                 location,
             })),
         );
-        let (final_state, got) = interpreter.evaluate_expression(state.clone(), &expression).unwrap();
-        state.last().borrow_mut().remove("function");
-        final_state.last().borrow_mut().remove("function");
-        assert_eq!(state, final_state);
+        interpreter.state = RefCell::new(state);
+        let got = interpreter.evaluate_expression(&expression).unwrap();
         assert_eq!(got, Value::Nil);
     }
 

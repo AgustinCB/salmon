@@ -9,7 +9,7 @@ pub struct State<'a> {
     pub broke_loop: bool,
     pub loop_count: usize,
     pub in_function: bool,
-    environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
+    pub environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
 }
 
 impl<'a> State<'a> {

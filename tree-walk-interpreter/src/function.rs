@@ -1,5 +1,4 @@
 use ahash::{AHashMap as HashMap};
-use crate::state::State;
 use crate::value::Value;
 use parser::types::{ProgramError, SourceCodeLocation, Statement};
 use std::cell::RefCell;
@@ -31,20 +30,26 @@ impl<'a> LoxFunction<'a> {
                 location: self.location.clone(),
             });
         }
-        let mut current_state = State::new(&self.environments);
-        current_state.push();
+        let old_envs = interpreter.state.borrow().get_environments();
+        interpreter.state.borrow_mut().environments = self.environments.clone();
+        interpreter.state.borrow_mut().push();
         for (name, value) in self.arguments.iter().cloned().zip(values.iter().cloned()) {
-            current_state.insert_top(name, value);
+            interpreter.state.borrow_mut().insert_top(name, value);
         }
-        current_state.in_function = true;
+        interpreter.state.borrow_mut().in_function = true;
+        let mut value = Value::Nil;
         for st in self.body.iter() {
-            current_state = interpreter.evaluate(current_state, st)?.0;
-            if let Some(return_value) = &current_state.return_value {
-                let value = (**return_value).clone();
-                return Ok(value);
+            interpreter.evaluate(st)?;
+            if let Some(return_value) = &interpreter.state.borrow().return_value {
+                value = (**return_value).clone();
+                break;
             }
         }
-        Ok(Value::Nil)
+        interpreter.state.borrow_mut().return_value = None;
+        interpreter.state.borrow_mut().pop();
+        interpreter.state.borrow_mut().in_function = false;
+        interpreter.state.borrow_mut().environments = old_envs;
+        Ok(value)
     }
 }
 
