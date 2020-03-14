@@ -30,10 +30,11 @@ impl<'a> LoxFunction<'a> {
                 location: self.location.clone(),
             });
         }
-        let old_envs = interpreter.state.borrow().get_environments();
+        let prev_margin = interpreter.state.borrow().view_margin;
         {
             let mut s = interpreter.state.borrow_mut();
-            s.environments = self.environments.clone();
+            s.environments.extend_from_slice(&self.environments);
+            s.view_margin = s.environments.len() - self.environments.len();
             s.push();
             for (name, value) in self.arguments.iter().zip(values.iter().cloned()) {
                 s.insert_top(name, value);
@@ -51,9 +52,14 @@ impl<'a> LoxFunction<'a> {
         {
             let mut s = interpreter.state.borrow_mut();
             s.return_value = None;
-            s.pop();
             s.in_function = false;
-            s.environments = old_envs;
+            s.pop();
+            let current_len = s.environments.len();
+            s.view_margin = prev_margin;
+            s.environments.resize_with(
+                current_len - self.environments.len(),
+                || unreachable!(),
+            );
         }
         Ok(value)
     }

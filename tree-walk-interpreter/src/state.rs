@@ -10,6 +10,7 @@ pub struct State<'a> {
     pub loop_count: usize,
     pub in_function: bool,
     pub environments: Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>>,
+    pub view_margin: usize,
 }
 
 impl<'a> State<'a> {
@@ -23,18 +24,19 @@ impl<'a> State<'a> {
             in_function: false,
             loop_count: 0,
             environments: environments.to_vec(),
+            view_margin: 0,
         }
     }
 
     pub fn assign_at(&self, id: usize, identifier: &'a str, value: &Value<'a>) {
-        self.environments.get(id).iter().for_each(|e| {
+        self.environments.get(id + self.view_margin).iter().for_each(|e| {
             e.borrow_mut().insert(identifier, value.clone());
         });
     }
 
     pub fn get_at(&self, identifier: &str, id: usize) -> Option<Value<'a>> {
         self.environments
-            .get(id)
+            .get(id + self.view_margin)
             .map(|e| e.borrow().get(identifier).cloned())
             .flatten()
     }
@@ -60,7 +62,7 @@ impl<'a> State<'a> {
     }
 
     pub fn insert(&mut self, identifier: &'a str, value: Value<'a>) {
-        for env in self.environments.iter().rev() {
+        for env in self.environments[self.view_margin..].iter().rev() {
             if env.borrow().contains_key(&identifier) {
                 env.borrow_mut().insert(identifier, value);
                 return;
@@ -71,7 +73,7 @@ impl<'a> State<'a> {
 
     #[cfg(test)]
     pub fn find(&self, identifier: &str) -> Option<Value<'a>> {
-        self.environments
+        self.environments[self.view_margin..]
             .iter()
             .rev()
             .map(|env| env.borrow().get(identifier).cloned())
@@ -88,7 +90,7 @@ impl<'a> State<'a> {
     }
 
     pub fn get_environments(&self) -> Vec<Rc<RefCell<HashMap<&'a str, Value<'a>>>>> {
-        self.environments.clone()
+        self.environments[self.view_margin..].to_vec()
     }
 }
 
@@ -100,6 +102,7 @@ impl<'a> Default for State<'a> {
             loop_count: 0,
             in_function: false,
             environments: vec![Rc::new(RefCell::new(HashMap::default()))],
+            view_margin: 0,
         }
     }
 }
