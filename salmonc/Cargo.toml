@@ -1,0 +1,11 @@
+[package]
+name = "salmonc"
+version = "0.1.0"
+authors = ["Agustin Chiappe Berrini <agustin@chiappeberrini.me>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+parser = { path = "../parser" }
+smoked = { path = "../../emulators/smoked" }

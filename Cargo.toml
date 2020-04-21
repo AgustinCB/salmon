@@ -1,2 +1,2 @@
 [workspace]
-members = ["parser", "tree-walk-interpreter"]
+members = ["parser", "salmonc", "tree-walk-interpreter"]
