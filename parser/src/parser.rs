@@ -1093,7 +1093,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             .content
             .borrow_mut()
             .peek()
-            .map(|t| [TokenType::Minus, TokenType::Plus].contains(&t.token_type))
+            .map(|t| [TokenType::Minus, TokenType::Plus, TokenType::Bang].contains(&t.token_type))
             .unwrap_or(false)
         {
             let t = self.next().unwrap();

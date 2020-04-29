@@ -409,7 +409,7 @@ pub trait Pass<'a, R> {
                 then_branch,
                 else_branch,
             } => self.pass_conditional(condition, then_branch, else_branch)?,
-            ExpressionType::Unary { operand, .. } => self.pass_unary(operand)?,
+            ExpressionType::Unary { operand, operator } => self.pass_unary(operand, operator)?,
             ExpressionType::ExpressionLiteral {
                 value
             } => self.pass_expression_literal(value)?,
@@ -657,7 +657,11 @@ pub trait Pass<'a, R> {
         self.pass_expression(else_branch)
     }
 
-    fn pass_unary(&mut self, operand: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+    fn pass_unary(
+        &mut self,
+        operand: &'a Expression<'a>,
+        _operator: &'a TokenType<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(operand)
     }
 

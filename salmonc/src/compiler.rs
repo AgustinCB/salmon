@@ -22,6 +22,18 @@ impl<'a> Compiler<'a> {
     }
 }
 
+impl<'a> Compiler<'a> {
+    fn constant_from_literal(&mut self, value: &'a Literal<'a>) -> usize {
+        match self.constants.iter().position(|i| i == value) {
+            Some(i) => i,
+            None => {
+                self.constants.push(value.clone());
+                self.constants.len() - 1
+            }
+        }
+    }
+}
+
 impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<Vec<Instruction>, Vec<ProgramError<'a>>> {
         for s in ss {
@@ -35,13 +47,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     }
 
     fn pass_expression_literal(&mut self, value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {
-        let constant_index = match self.constants.iter().position(|i| i == value) {
-            Some(i) => i,
-            None => {
-                self.constants.push(value.clone());
-                self.constants.len() - 1
-            }
-        };
+        let constant_index = self.constant_from_literal(value);
         self.instructions.push(Instruction {
             instruction_type: InstructionType::Constant(constant_index),
             location: self.locations.len() - 1,
@@ -108,6 +114,40 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             }),
             t => Err(vec![ProgramError {
                 message: format!("Invalid operator {:?}", t),
+                location: self.locations.last().unwrap().clone(),
+            }])?,
+        }
+        Ok(())
+    }
+
+    fn pass_unary(
+        &mut self,
+        operand: &'a Expression<'a>,
+        operator: &'a TokenType<'a>
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        if let TokenType::Minus = operator {
+            let constant = self.constant_from_literal(&Literal::Integer(0));
+            self.instructions.push(Instruction {
+                instruction_type: InstructionType::Constant(constant),
+                location: self.locations.len() - 1,
+            });
+        }
+        self.pass_expression(operand)?;
+        match operator {
+            TokenType::Plus => self.instructions.push(Instruction {
+                instruction_type: InstructionType::Abs,
+                location: self.locations.len() - 1,
+            }),
+            TokenType::Minus => self.instructions.push(Instruction {
+                instruction_type: InstructionType::Minus,
+                location: self.locations.len() - 1,
+            }),
+            TokenType::Bang => self.instructions.push(Instruction {
+                instruction_type: InstructionType::Not,
+                location: self.locations.len() - 1,
+            }),
+            t => Err(vec![ProgramError {
+                message: format!("Invalid unary operator {:?}", t),
                 location: self.locations.last().unwrap().clone(),
             }])?,
         }
