@@ -1,0 +1,20 @@
+#!/bin/bash
+
+set -euo pipefail
+
+ROOT=$(dirname "$(readlink -f "$0")")
+TEST=${1:?First argument should be a test file}
+TEST_NAME=$(basename "$TEST")
+FOLDER=$(mktemp -d)
+
+trap "rm -fr $FOLDER; exit" EXIT
+
+echo "Running test $TEST"
+cat "$TEST" | "$ROOT"/../../target/debug/salmonc >"$FOLDER/$TEST_NAME.bin"
+
+set +e
+cat "$FOLDER/$TEST_NAME.bin" | "$ROOT"/../../../emulators/target/debug/smoked -d -s >"$FOLDER/out" 2>"$FOLDER/err"
+set -e
+
+diff "$FOLDER/out" "$TEST.out"
+diff "$FOLDER/err" "$TEST.err"

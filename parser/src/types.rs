@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display, Error, Formatter};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct SourceCodeLocation<'a> {
     pub file: &'a str,
     pub line: usize,
@@ -399,8 +399,8 @@ pub trait Pass<'a, R> {
                 identifier,
                 expression: expression_value,
             } => self.pass_variable_assignment(identifier, expression_value, expression)?,
-            ExpressionType::Binary { left, right, .. } =>
-                self.pass_binary(left, right)?,
+            ExpressionType::Binary { left, right, operator } =>
+                self.pass_binary(left, right, operator)?,
             ExpressionType::Call { callee, arguments } =>
                 self.pass_call(callee, arguments)?,
             ExpressionType::Grouping { expression } => self.pass_grouping(expression)?,
@@ -410,7 +410,9 @@ pub trait Pass<'a, R> {
                 else_branch,
             } => self.pass_conditional(condition, then_branch, else_branch)?,
             ExpressionType::Unary { operand, .. } => self.pass_unary(operand)?,
-            ExpressionType::ExpressionLiteral { .. } => {}
+            ExpressionType::ExpressionLiteral {
+                value
+            } => self.pass_expression_literal(value)?,
             ExpressionType::AnonymousFunction { arguments, body } =>
                 self.pass_anonymous_function(arguments, body, expression)?,
             ExpressionType::RepeatedElementArray { element, length } =>
@@ -424,6 +426,10 @@ pub trait Pass<'a, R> {
                 value,
             } => self.pass_array_element_set(array, index, value)?,
         };
+        Ok(())
+    }
+
+    fn pass_expression_literal(&mut self, _value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         Ok(())
     }
 
@@ -613,7 +619,12 @@ pub trait Pass<'a, R> {
         self.pass_expression(expression)
     }
 
-    fn pass_binary(&mut self, left: &'a Expression<'a>, right: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+    fn pass_binary(
+        &mut self,
+        left: &'a Expression<'a>,
+        right: &'a Expression<'a>,
+        _operator: &'a TokenType<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(left)?;
         self.pass_expression(right)
     }

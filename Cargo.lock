@@ -473,6 +473,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 name = "salmonc"
 version = "0.1.0"
 dependencies = [
+ "ahash 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "failure 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "parser 0.1.0",
  "smoked 0.1.0",
 ]
