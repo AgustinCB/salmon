@@ -606,8 +606,8 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     parse_branch!(self, types, location, Type::Trait, next_location);
                 }
                 Some(TokenType::Identifier { name }) => {
-                    let obj = Box::new(self.parse_variable_or_module_access(name, location)?);
-                    parse_branch!(self, types, location, Type::UserDefined(obj), next_location);
+                    let _obj = Box::new(self.parse_variable_or_module_access(name, location)?);
+                    parse_branch!(self, types, location, Type::UserDefined(_obj), next_location);
                 }
                 _ => return Err(ProgramError {
                     message: "All branches should match using literals".to_owned(),

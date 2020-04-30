@@ -4,6 +4,8 @@ use smoked::instruction::{Instruction, InstructionType};
 
 pub struct Compiler<'a> {
     pub constants: Vec<Literal<'a>>,
+    buffer: Vec<Instruction>,
+    dry_run: bool,
     instructions: Vec<Instruction>,
     last_location: Option<SourceCodeLocation<'a>>,
     locals: HashMap<usize, usize>,
@@ -13,7 +15,9 @@ pub struct Compiler<'a> {
 impl<'a> Compiler<'a> {
     pub fn new(locals: HashMap<usize, usize>) -> Compiler<'a> {
         Compiler {
+            buffer: vec![],
             constants: vec![],
+            dry_run: false,
             instructions: vec![],
             last_location: None,
             locations: vec![],
@@ -32,6 +36,23 @@ impl<'a> Compiler<'a> {
             }
         }
     }
+
+    fn toggle_dry(&mut self) {
+        self.dry_run = !self.dry_run;
+    }
+
+    fn add_instruction(&mut self, instruction: Instruction) {
+        (if self.dry_run {
+            &mut self.buffer
+        } else {
+           &mut self.instructions
+        }).push(instruction);
+    }
+
+    fn drain_buffer(&mut self) {
+        self.instructions.extend_from_slice(&self.buffer);
+        self.buffer.clear();
+    }
 }
 
 impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
@@ -48,7 +69,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
 
     fn pass_expression_literal(&mut self, value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         let constant_index = self.constant_from_literal(value);
-        self.instructions.push(Instruction {
+        self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant_index),
             location: self.locations.len() - 1,
         });
@@ -64,51 +85,51 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         self.pass_expression(left)?;
         self.pass_expression(right)?;
         match operator {
-            TokenType::Plus => self.instructions.push(Instruction {
+            TokenType::Plus => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Plus,
                 location: self.locations.len() - 1,
             }),
-            TokenType::Minus => self.instructions.push(Instruction {
+            TokenType::Minus => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Minus,
                 location: self.locations.len() - 1,
             }),
-            TokenType::Slash => self.instructions.push(Instruction {
+            TokenType::Slash => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Div,
                 location: self.locations.len() - 1,
             }),
-            TokenType::Star => self.instructions.push(Instruction {
+            TokenType::Star => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Mult,
                 location: self.locations.len() - 1,
             }),
-            TokenType::Greater => self.instructions.push(Instruction {
+            TokenType::Greater => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Greater,
                 location: self.locations.len() - 1,
             }),
-            TokenType::GreaterEqual => self.instructions.push(Instruction {
+            TokenType::GreaterEqual => self.add_instruction(Instruction {
                 instruction_type: InstructionType::GreaterEqual,
                 location: self.locations.len() - 1,
             }),
-            TokenType::Less => self.instructions.push(Instruction {
+            TokenType::Less => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Less,
                 location: self.locations.len() - 1,
             }),
-            TokenType::LessEqual => self.instructions.push(Instruction {
+            TokenType::LessEqual => self.add_instruction(Instruction {
                 instruction_type: InstructionType::LessEqual,
                 location: self.locations.len() - 1,
             }),
-            TokenType::EqualEqual => self.instructions.push(Instruction {
+            TokenType::EqualEqual => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Equal,
                 location: self.locations.len() - 1,
             }),
-            TokenType::BangEqual => self.instructions.push(Instruction {
+            TokenType::BangEqual => self.add_instruction(Instruction {
                 instruction_type: InstructionType::NotEqual,
                 location: self.locations.len() - 1,
             }),
-            TokenType::And => self.instructions.push(Instruction {
+            TokenType::And => self.add_instruction(Instruction {
                 instruction_type: InstructionType::And,
                 location: self.locations.len() - 1,
             }),
-            TokenType::Or => self.instructions.push(Instruction {
+            TokenType::Or => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Or,
                 location: self.locations.len() - 1,
             }),
@@ -120,6 +141,32 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_conditional(
+        &mut self,
+        condition: &'a Expression<'a>,
+        then_branch: &'a Expression<'a>,
+        else_branch: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(condition)?;
+        self.toggle_dry();
+        self.pass_expression(then_branch)?;
+        self.toggle_dry();
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::JmpIfFalse(self.buffer.len() + 1),
+            location: self.locations.len() - 1,
+        });
+        self.drain_buffer();
+        self.toggle_dry();
+        self.pass_expression(else_branch)?;
+        self.toggle_dry();
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Jmp(self.buffer.len()),
+            location: self.locations.len() - 1,
+        });
+        self.drain_buffer();
+        Ok(())
+    }
+
     fn pass_unary(
         &mut self,
         operand: &'a Expression<'a>,
@@ -127,22 +174,22 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     ) -> Result<(), Vec<ProgramError<'a>>> {
         if let TokenType::Minus = operator {
             let constant = self.constant_from_literal(&Literal::Integer(0));
-            self.instructions.push(Instruction {
+            self.add_instruction(Instruction {
                 instruction_type: InstructionType::Constant(constant),
                 location: self.locations.len() - 1,
             });
         }
         self.pass_expression(operand)?;
         match operator {
-            TokenType::Plus => self.instructions.push(Instruction {
+            TokenType::Plus => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Abs,
                 location: self.locations.len() - 1,
             }),
-            TokenType::Minus => self.instructions.push(Instruction {
+            TokenType::Minus => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Minus,
                 location: self.locations.len() - 1,
             }),
-            TokenType::Bang => self.instructions.push(Instruction {
+            TokenType::Bang => self.add_instruction(Instruction {
                 instruction_type: InstructionType::Not,
                 location: self.locations.len() - 1,
             }),

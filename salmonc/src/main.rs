@@ -12,7 +12,7 @@ use std::process::exit;
 use smoked::cpu::{Value, Location};
 use smoked::instruction::Instruction;
 use smoked::serde::to_bytes;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 mod compiler;
 
