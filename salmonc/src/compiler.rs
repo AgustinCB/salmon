@@ -200,4 +200,25 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         }
         Ok(())
     }
+
+    fn pass_array_element(&mut self, array: &'a Expression<'a>, index: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(index)?;
+        self.pass_expression(array)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ArrayGet,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_array_element_set(&mut self, array: &'a Expression<'a>, index: &'a Expression<'a>, value: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(value)?;
+        self.pass_expression(index)?;
+        self.pass_expression(array)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ArraySet,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
 }
