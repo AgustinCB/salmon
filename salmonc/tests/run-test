@@ -13,7 +13,7 @@ echo "Running test $TEST"
 cat "$TEST" | "$ROOT"/../../target/debug/salmonc >"$FOLDER/$TEST_NAME.bin"
 
 set +e
-cat "$FOLDER/$TEST_NAME.bin" | "$ROOT"/../../../emulators/target/debug/smoked -d -s >"$FOLDER/out" 2>"$FOLDER/err"
+cat "$FOLDER/$TEST_NAME.bin" | "$ROOT"/../../../emulators/target/debug/smoked -d -s -S 2048 >"$FOLDER/out" 2>"$FOLDER/err"
 set -e
 
 diff "$FOLDER/out" "$TEST.out"

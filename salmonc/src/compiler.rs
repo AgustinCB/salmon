@@ -201,6 +201,32 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_array(&mut self, elements: &'a [Box<Expression<'a>>]) -> Result<(), Vec<ProgramError<'a>>> {
+        for element in elements.iter().rev() {
+            self.pass_expression(element)?;
+        }
+        let c = match self.constants.iter().position(|i| i == &Literal::Integer(elements.len() as _)) {
+            Some(i) => i,
+            None => {
+                self.constants.push(Literal::Integer(elements.len() as _));
+                self.constants.len() - 1
+            }
+        };
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(c),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ArrayAlloc,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::MultiArraySet,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_array_element(&mut self, array: &'a Expression<'a>, index: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(index)?;
         self.pass_expression(array)?;
