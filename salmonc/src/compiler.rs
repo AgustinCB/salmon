@@ -227,6 +227,20 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_repeated_element_array(&mut self, element: &'a Expression<'a>, length: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(element)?;
+        self.pass_expression(length)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ArrayAlloc,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::RepeatedArraySet,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_array_element(&mut self, array: &'a Expression<'a>, index: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(index)?;
         self.pass_expression(array)?;
