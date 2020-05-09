@@ -367,7 +367,7 @@ pub trait Pass<'a, R> {
                 arguments,
                 body,
             } => self.pass_function_declaration(name, arguments, body, statement)?,
-            StatementType::Expression { expression } => self.pass_expression(expression)?,
+            StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
             StatementType::If {
                 condition,
                 then,
@@ -427,6 +427,13 @@ pub trait Pass<'a, R> {
             } => self.pass_array_element_set(array, index, value)?,
         };
         Ok(())
+    }
+
+    fn pass_expression_statement(
+        &mut self,
+        expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(expression)
     }
 
     fn pass_expression_literal(&mut self, _value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {

@@ -27,11 +27,11 @@ impl<'a> Compiler<'a> {
 }
 
 impl<'a> Compiler<'a> {
-    fn constant_from_literal(&mut self, value: &'a Literal<'a>) -> usize {
-        match self.constants.iter().position(|i| i == value) {
+    fn constant_from_literal(&mut self, value: Literal<'a>) -> usize {
+        match self.constants.iter().position(|i| i == &value) {
             Some(i) => i,
             None => {
-                self.constants.push(value.clone());
+                self.constants.push(value);
                 self.constants.len() - 1
             }
         }
@@ -68,9 +68,44 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     }
 
     fn pass_expression_literal(&mut self, value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {
-        let constant_index = self.constant_from_literal(value);
+        let constant_index = self.constant_from_literal(value.clone());
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant_index),
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_print(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        let c0 = self.constant_from_literal(Literal::Integer(1));
+        let c1 = self.constant_from_literal(Literal::Integer(3));
+        self.pass_expression(expression)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Push,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Strlen,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Swap,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(c0),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(c1),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(c0),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Syscall,
             location: self.locations.len() - 1,
         });
         Ok(())
@@ -173,7 +208,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         operator: &'a TokenType<'a>
     ) -> Result<(), Vec<ProgramError<'a>>> {
         if let TokenType::Minus = operator {
-            let constant = self.constant_from_literal(&Literal::Integer(0));
+            let constant = self.constant_from_literal(Literal::Integer(0));
             self.add_instruction(Instruction {
                 instruction_type: InstructionType::Constant(constant),
                 location: self.locations.len() - 1,
@@ -201,17 +236,25 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_repeated_element_array(&mut self, element: &'a Expression<'a>, length: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(element)?;
+        self.pass_expression(length)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ArrayAlloc,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::RepeatedArraySet,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_array(&mut self, elements: &'a [Box<Expression<'a>>]) -> Result<(), Vec<ProgramError<'a>>> {
         for element in elements.iter().rev() {
             self.pass_expression(element)?;
         }
-        let c = match self.constants.iter().position(|i| i == &Literal::Integer(elements.len() as _)) {
-            Some(i) => i,
-            None => {
-                self.constants.push(Literal::Integer(elements.len() as _));
-                self.constants.len() - 1
-            }
-        };
+        let c = self.constant_from_literal(Literal::Integer(elements.len() as _));
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(c),
             location: self.locations.len() - 1,
@@ -222,20 +265,6 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::MultiArraySet,
-            location: self.locations.len() - 1,
-        });
-        Ok(())
-    }
-
-    fn pass_repeated_element_array(&mut self, element: &'a Expression<'a>, length: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
-        self.pass_expression(element)?;
-        self.pass_expression(length)?;
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::ArrayAlloc,
-            location: self.locations.len() - 1,
-        });
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::RepeatedArraySet,
             location: self.locations.len() - 1,
         });
         Ok(())
