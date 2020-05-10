@@ -1,8 +1,8 @@
-true and true;
-true and false;
-false and true;
-false and false;
-true or true;
-true or false;
-false or true;
-false or false;
+print true and true;
+print true and false;
+print false and true;
+print false and false;
+print true or true;
+print true or false;
+print false or true;
+print false or false;

@@ -67,6 +67,18 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(self.instructions.clone())
     }
 
+    fn pass_expression_statement(
+        &mut self,
+        expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(expression)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Pop,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_expression_literal(&mut self, value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         let constant_index = self.constant_from_literal(value.clone());
         self.add_instruction(Instruction {
@@ -79,7 +91,20 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     fn pass_print(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         let c0 = self.constant_from_literal(Literal::Integer(1));
         let c1 = self.constant_from_literal(Literal::Integer(3));
+        let newline = self.constant_from_literal(Literal::QuotedString("\n"));
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(newline),
+            location: self.locations.len() - 1,
+        });
         self.pass_expression(expression)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ToStr,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::StringConcat,
+            location: self.locations.len() - 1,
+        });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Push,
             location: self.locations.len() - 1,
@@ -106,6 +131,10 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Syscall,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Pop,
             location: self.locations.len() - 1,
         });
         Ok(())
