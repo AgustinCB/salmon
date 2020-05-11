@@ -10,6 +10,7 @@ pub struct Compiler<'a> {
     last_location: Option<SourceCodeLocation<'a>>,
     locals: HashMap<usize, usize>,
     pub locations: Vec<SourceCodeLocation<'a>>,
+    scopes: Vec<HashMap<&'a str, usize>>,
 }
 
 impl<'a> Compiler<'a> {
@@ -21,6 +22,7 @@ impl<'a> Compiler<'a> {
             instructions: vec![],
             last_location: None,
             locations: vec![],
+            scopes: vec![HashMap::default()],
             locals,
         }
     }
@@ -138,6 +140,73 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             location: self.locations.len() - 1,
         });
         Ok(())
+    }
+
+    fn pass_variable_literal(
+        &mut self,
+        identifier: &'a str,
+        expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        if let Some(scope_id) = self.locals.get(&expression.id()).cloned() {
+            let var_id = *self.scopes[0].get(identifier).unwrap();
+            if scope_id == 0 {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::GetGlobal(var_id),
+                    location: self.locations.len() - 1,
+                });
+            } else {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::GetLocal(var_id),
+                    location: self.locations.len() - 1,
+                });
+            }
+            Ok(())
+        } else {
+            Err(vec![ProgramError {
+                message: format!("Variable {} not declared", identifier),
+                location: self.locations.last().unwrap().clone(),
+            }])
+        }
+    }
+
+    fn pass_variable_assignment(
+        &mut self,
+        identifier: &'a str,
+        expression_value: &'a Expression<'a>,
+        expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        if let Some(scope_id) = self.locals.get(&expression.id()).cloned() {
+            let var_id = match self.scopes[0].get(identifier) {
+                Some(id) => *id,
+                None => {
+                    let id = self.scopes[0].len();
+                    self.scopes[0].insert(identifier, id);
+                    id
+                }
+            };
+            self.pass_expression(expression_value)?;
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Push,
+                location: self.locations.len() - 1,
+            });
+            if scope_id == 0 {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::SetGlobal(var_id),
+                    location: self.locations.len() - 1,
+                });
+            } else {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::SetLocal(var_id),
+                    location: self.locations.len() - 1,
+                });
+            }
+            Ok(())
+        } else {
+            Err(vec![ProgramError {
+                message: format!("Variable {} not declared", identifier),
+                location: self.locations.last().unwrap().clone(),
+            }])
+        }
     }
 
     fn pass_binary(
