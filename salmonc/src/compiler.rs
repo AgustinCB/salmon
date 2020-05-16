@@ -2,15 +2,34 @@ use ahash::{AHashMap as HashMap};
 use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType};
 use smoked::instruction::{Instruction, InstructionType};
 
+#[derive(PartialEq)]
+pub enum ConstantValues<'a> {
+    Literal(Literal<'a>),
+    Function {
+        arity: usize,
+        ip: usize,
+        name: &'a str,
+    }
+}
+
+#[derive(Clone, Copy)]
+pub enum BufferSelection {
+    DryRun,
+    Rom,
+    Function,
+}
+
 pub struct Compiler<'a> {
-    pub constants: Vec<Literal<'a>>,
+    pub constants: Vec<ConstantValues<'a>>,
     buffer: Vec<Instruction>,
-    dry_run: bool,
+    function_instructions: Vec<Instruction>,
+    functions: HashMap<&'a str, usize>,
     instructions: Vec<Instruction>,
     last_location: Option<SourceCodeLocation<'a>>,
     locals: HashMap<usize, usize>,
     pub locations: Vec<SourceCodeLocation<'a>>,
     scopes: Vec<HashMap<&'a str, usize>>,
+    toggle_selection: BufferSelection,
 }
 
 impl<'a> Compiler<'a> {
@@ -18,18 +37,20 @@ impl<'a> Compiler<'a> {
         Compiler {
             buffer: vec![],
             constants: vec![],
-            dry_run: false,
+            function_instructions: vec![],
+            functions: HashMap::default(),
             instructions: vec![],
             last_location: None,
             locations: vec![],
             scopes: vec![HashMap::default()],
+            toggle_selection: BufferSelection::Rom,
             locals,
         }
     }
 }
 
 impl<'a> Compiler<'a> {
-    fn constant_from_literal(&mut self, value: Literal<'a>) -> usize {
+    fn constant_from_literal(&mut self, value: ConstantValues<'a>) -> usize {
         match self.constants.iter().position(|i| i == &value) {
             Some(i) => i,
             None => {
@@ -39,16 +60,16 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn toggle_dry(&mut self) {
-        self.dry_run = !self.dry_run;
+    fn toggle_selection(&mut self, selection: BufferSelection) {
+        self.toggle_selection = selection;
     }
 
     fn add_instruction(&mut self, instruction: Instruction) {
-        (if self.dry_run {
-            &mut self.buffer
-        } else {
-           &mut self.instructions
-        }).push(instruction);
+        (match self.toggle_selection {
+            BufferSelection::DryRun => &mut self.buffer,
+            BufferSelection::Function => &mut self.function_instructions,
+            BufferSelection::Rom => &mut self.instructions,
+        }).push(instruction)
     }
 
     fn drain_buffer(&mut self) {
@@ -66,7 +87,18 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             }
             self.pass(s)?;
         }
-        Ok(self.instructions.clone())
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Return,
+            location: self.locations.len() - 1,
+        });
+        let mut instructions = self.instructions.clone();
+        for constant in self.constants.iter_mut() {
+            if let ConstantValues::Function { ip, .. } = constant {
+                *ip += self.instructions.len();
+            }
+        }
+        instructions.extend_from_slice(&self.function_instructions);
+        Ok(instructions)
     }
 
     fn pass_expression_statement(
@@ -82,7 +114,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     }
 
     fn pass_expression_literal(&mut self, value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {
-        let constant_index = self.constant_from_literal(value.clone());
+        let constant_index = self.constant_from_literal(ConstantValues::Literal(value.clone()));
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant_index),
             location: self.locations.len() - 1,
@@ -91,9 +123,9 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     }
 
     fn pass_print(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
-        let c0 = self.constant_from_literal(Literal::Integer(1));
-        let c1 = self.constant_from_literal(Literal::Integer(3));
-        let newline = self.constant_from_literal(Literal::QuotedString("\n"));
+        let c0 = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(1)));
+        let c1 = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(3)));
+        let newline = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString("\n")));
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(newline),
             location: self.locations.len() - 1,
@@ -148,7 +180,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         if let Some(scope_id) = self.locals.get(&expression.id()).cloned() {
-            let var_id = *self.scopes[0].get(identifier).unwrap();
+            let var_id = *self.scopes[scope_id].get(identifier).unwrap();
             if scope_id == 0 {
                 self.add_instruction(Instruction {
                     instruction_type: InstructionType::GetGlobal(var_id),
@@ -162,10 +194,18 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             }
             Ok(())
         } else {
-            Err(vec![ProgramError {
-                message: format!("Variable {} not declared", identifier),
-                location: self.locations.last().unwrap().clone(),
-            }])
+            if let Some(constant) = self.functions.get(identifier).cloned() {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Constant(constant),
+                    location: self.locations.len() - 1,
+                });
+                Ok(())
+            } else {
+                Err(vec![ProgramError {
+                    message: format!("Variable {} not declared", identifier),
+                    location: self.locations.last().unwrap().clone(),
+                }])
+            }
         }
     }
 
@@ -274,6 +314,23 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_call(
+        &mut self,
+        callee: &'a Expression<'a>,
+        arguments: &'a [Box<Expression<'a>>],
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        arguments
+            .iter()
+            .map(|a| self.pass_expression(a))
+            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
+        self.pass_expression(callee)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Call,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_conditional(
         &mut self,
         condition: &'a Expression<'a>,
@@ -281,17 +338,18 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         else_branch: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(condition)?;
-        self.toggle_dry();
+        let current_selection = self.toggle_selection;
+        self.toggle_selection(BufferSelection::DryRun);
         self.pass_expression(then_branch)?;
-        self.toggle_dry();
+        self.toggle_selection(current_selection);
         self.add_instruction(Instruction {
             instruction_type: InstructionType::JmpIfFalse(self.buffer.len() + 1),
             location: self.locations.len() - 1,
         });
         self.drain_buffer();
-        self.toggle_dry();
+        self.toggle_selection(BufferSelection::DryRun);
         self.pass_expression(else_branch)?;
-        self.toggle_dry();
+        self.toggle_selection(current_selection);
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Jmp(self.buffer.len()),
             location: self.locations.len() - 1,
@@ -306,7 +364,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         operator: &'a TokenType<'a>
     ) -> Result<(), Vec<ProgramError<'a>>> {
         if let TokenType::Minus = operator {
-            let constant = self.constant_from_literal(Literal::Integer(0));
+            let constant = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(0)));
             self.add_instruction(Instruction {
                 instruction_type: InstructionType::Constant(constant),
                 location: self.locations.len() - 1,
@@ -334,6 +392,45 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_anonymous_function(
+        &mut self,
+        arguments: &'a [&'a str],
+        body: &'a [Statement<'a>],
+        _expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let constant = self.constant_from_literal(ConstantValues::Function {
+            arity: arguments.len(),
+            ip: self.function_instructions.len(),
+            name: "@anonymous",
+        });
+        let previous = self.toggle_selection;
+        self.toggle_selection(BufferSelection::Function);
+        let mut new_scope = HashMap::default();
+        for (i, n) in arguments.iter().cloned().enumerate() {
+            new_scope.insert(n, i);
+        }
+        self.scopes.push(new_scope);
+        let prev_functions_size = self.function_instructions.len();
+        for s in body {
+            self.pass(s)?;
+        }
+        if prev_functions_size == self.function_instructions.len() ||
+            self.function_instructions.last().map(|i| i.instruction_type == InstructionType::Return)
+                .unwrap_or(true) {
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Return,
+                location: self.locations.len() -1,
+            });
+        }
+        self.scopes.pop();
+        self.toggle_selection(previous);
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(constant),
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_repeated_element_array(&mut self, element: &'a Expression<'a>, length: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(element)?;
         self.pass_expression(length)?;
@@ -352,7 +449,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         for element in elements.iter().rev() {
             self.pass_expression(element)?;
         }
-        let c = self.constant_from_literal(Literal::Integer(elements.len() as _));
+        let c = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(elements.len() as _)));
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(c),
             location: self.locations.len() - 1,

@@ -13,6 +13,7 @@ use smoked::cpu::{Value, Location};
 use smoked::instruction::Instruction;
 use smoked::serde::to_bytes;
 use std::collections::HashMap;
+use crate::compiler::ConstantValues;
 
 mod compiler;
 
@@ -55,7 +56,7 @@ fn handle_result<T>(result: Result<T, Vec<ProgramError>>) -> T {
 }
 
 fn create_vm<'a>(
-    literals: Vec<Literal<'a>>,
+    literals: Vec<ConstantValues<'a>>,
     source_code_locations: Vec<SourceCodeLocation<'a>>,
     rom: Vec<Instruction>,
 ) -> Result<Vec<u8>, Error> {
@@ -67,7 +68,7 @@ fn create_vm<'a>(
     let mut string_address = HashMap::new();
     for c in literals.iter() {
         match c {
-            Literal::QuotedString(s) => {
+            ConstantValues::Literal(Literal::QuotedString(s)) => {
                 if string_address.get(s).is_none() {
                     let address = last_address;
                     last_address += s.len();
@@ -78,11 +79,12 @@ fn create_vm<'a>(
                     constants.push(Value::String(string_address[*s]));
                 }
             }
-            Literal::Integer(i) => constants.push(Value::Integer(*i)),
-            Literal::Float(f) => constants.push(Value::Float(*f)),
-            Literal::Keyword(DataKeyword::True) => constants.push(Value::Bool(true)),
-            Literal::Keyword(DataKeyword::False) => constants.push(Value::Bool(false)),
-            Literal::Keyword(DataKeyword::Nil) => constants.push(Value::Nil),
+            ConstantValues::Literal(Literal::Integer(i)) => constants.push(Value::Integer(*i)),
+            ConstantValues::Literal(Literal::Float(f)) => constants.push(Value::Float(*f)),
+            ConstantValues::Literal(Literal::Keyword(DataKeyword::True)) => constants.push(Value::Bool(true)),
+            ConstantValues::Literal(Literal::Keyword(DataKeyword::False)) => constants.push(Value::Bool(false)),
+            ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)) => constants.push(Value::Nil),
+            ConstantValues::Function { arity, ip, .. } => constants.push(Value::Function { ip: *ip, arity: *arity}),
         }
     }
 

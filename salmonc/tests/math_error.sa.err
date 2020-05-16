@@ -1,4 +1,4 @@
 Constants: [String(0), Integer(1), String(3)]
-Instructions: [Instruction { instruction_type: Constant(0), location: 0 }, Instruction { instruction_type: Constant(1), location: 0 }, Instruction { instruction_type: Plus, location: 0 }, Instruction { instruction_type: Pop, location: 0 }]
+Instructions: [Instruction { instruction_type: Constant(0), location: 0 }, Instruction { instruction_type: Constant(1), location: 0 }, Instruction { instruction_type: Plus, location: 0 }, Instruction { instruction_type: Pop, location: 0 }, Instruction { instruction_type: Return, location: 0 }]
 Locations: [Location { address: 3, line: 0 }]
 [stdin line 0] Expected two numbers
