@@ -2,3 +2,7 @@
     print "hola";
     print a;
 })(2);
+print (fun(a) {
+    print "hola";
+    return a;
+})(2);

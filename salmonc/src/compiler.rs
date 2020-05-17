@@ -174,6 +174,17 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_return(&mut self, expression: &'a Option<Expression<'a>>) -> Result<(), Vec<ProgramError<'a>>> {
+        if let Some(e) = expression {
+            self.pass_expression(e)?;
+        };
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Return,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_variable_literal(
         &mut self,
         identifier: &'a str,
@@ -404,18 +415,18 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             name: "@anonymous",
         });
         let previous = self.toggle_selection;
+        let prev_functions_size = self.function_instructions.len();
         self.toggle_selection(BufferSelection::Function);
         let mut new_scope = HashMap::default();
         for (i, n) in arguments.iter().cloned().enumerate() {
             new_scope.insert(n, i);
         }
         self.scopes.push(new_scope);
-        let prev_functions_size = self.function_instructions.len();
         for s in body {
             self.pass(s)?;
         }
-        if prev_functions_size == self.function_instructions.len() ||
-            self.function_instructions.last().map(|i| i.instruction_type == InstructionType::Return)
+        if prev_functions_size != self.function_instructions.len() &&
+            self.function_instructions.last().map(|i| i.instruction_type != InstructionType::Return)
                 .unwrap_or(true) {
             self.add_instruction(Instruction {
                 instruction_type: InstructionType::Return,

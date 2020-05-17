@@ -374,8 +374,7 @@ pub trait Pass<'a, R> {
                 otherwise,
             } => self.pass_if(condition, then, otherwise)?,
             StatementType::PrintStatement { expression } => self.pass_print(expression)?,
-            StatementType::Return { value: Some(e) } => self.pass_return(e)?,
-            StatementType::Return { .. } => {}
+            StatementType::Return { value } => self.pass_return(value)?,
             StatementType::While { condition, action } =>
                 self.pass_while(condition, action)?,
             StatementType::Break => {}
@@ -562,8 +561,12 @@ pub trait Pass<'a, R> {
         self.pass_expression(expression)
     }
 
-    fn pass_return(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
-        self.pass_expression(expression)
+    fn pass_return(&mut self, expression: &'a Option<Expression<'a>>) -> Result<(), Vec<ProgramError<'a>>> {
+        if let Some(e) = expression {
+            self.pass_expression(e)
+        } else {
+            Ok(())
+        }
     }
 
     fn pass_while(
