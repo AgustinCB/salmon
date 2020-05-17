@@ -1,0 +1,5 @@
+fun test(a) {
+    print "hola";
+    return a;
+}
+print test(2);

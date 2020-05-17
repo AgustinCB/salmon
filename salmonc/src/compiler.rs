@@ -76,6 +76,41 @@ impl<'a> Compiler<'a> {
         self.instructions.extend_from_slice(&self.buffer);
         self.buffer.clear();
     }
+
+    fn add_function<I: Iterator<Item=&'a Statement<'a>>>(
+        &mut self,
+        name: &'a str,
+        arguments: &'a [&'a str],
+        body: I,
+    ) -> Result<usize, Vec<ProgramError<'a>>> {
+        let constant = self.constant_from_literal(ConstantValues::Function {
+            arity: arguments.len(),
+            ip: self.function_instructions.len(),
+            name,
+        });
+        let previous = self.toggle_selection;
+        let prev_functions_size = self.function_instructions.len();
+        self.toggle_selection(BufferSelection::Function);
+        let mut new_scope = HashMap::default();
+        for (i, n) in arguments.iter().cloned().enumerate() {
+            new_scope.insert(n, i);
+        }
+        self.scopes.push(new_scope);
+        for s in body {
+            self.pass(s)?;
+        }
+        if prev_functions_size != self.function_instructions.len() &&
+            self.function_instructions.last().map(|i| i.instruction_type != InstructionType::Return)
+                .unwrap_or(true) {
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Return,
+                location: self.locations.len() -1,
+            });
+        }
+        self.scopes.pop();
+        self.toggle_selection(previous);
+        Ok(constant)
+    }
 }
 
 impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
@@ -117,6 +152,32 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         let constant_index = self.constant_from_literal(ConstantValues::Literal(value.clone()));
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant_index),
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_function_declaration(
+        &mut self,
+        name: &'a str,
+        arguments: &'a [&'a str],
+        body: &'a [Box<Statement<'a>>],
+        _statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let constant = self.add_function(name, arguments, body.iter().map(|i| i.as_ref()))?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(constant),
+            location: self.locations.len() - 1,
+        });
+        let global_index = if let Some(global_index) = self.scopes[0].get(name) {
+            *global_index
+        } else {
+            let global_index = self.scopes[0].len();
+            self.scopes[0].insert(name, global_index);
+            global_index
+        };
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::SetGlobal(global_index),
             location: self.locations.len() - 1,
         });
         Ok(())
@@ -409,32 +470,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         body: &'a [Statement<'a>],
         _expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        let constant = self.constant_from_literal(ConstantValues::Function {
-            arity: arguments.len(),
-            ip: self.function_instructions.len(),
-            name: "@anonymous",
-        });
-        let previous = self.toggle_selection;
-        let prev_functions_size = self.function_instructions.len();
-        self.toggle_selection(BufferSelection::Function);
-        let mut new_scope = HashMap::default();
-        for (i, n) in arguments.iter().cloned().enumerate() {
-            new_scope.insert(n, i);
-        }
-        self.scopes.push(new_scope);
-        for s in body {
-            self.pass(s)?;
-        }
-        if prev_functions_size != self.function_instructions.len() &&
-            self.function_instructions.last().map(|i| i.instruction_type != InstructionType::Return)
-                .unwrap_or(true) {
-            self.add_instruction(Instruction {
-                instruction_type: InstructionType::Return,
-                location: self.locations.len() -1,
-            });
-        }
-        self.scopes.pop();
-        self.toggle_selection(previous);
+        let constant = self.add_function("@anonymous", arguments, body.iter())?;
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant),
             location: self.locations.len() - 1,
