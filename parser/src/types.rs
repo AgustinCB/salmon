@@ -332,6 +332,378 @@ impl<'a> Statement<'a> {
     }
 }
 
+pub trait MutPass<'a, R> {
+    fn run(&mut self, ss: &'a mut [Statement<'a>]) -> Result<R, Vec<ProgramError<'a>>>;
+
+    fn pass(&mut self, statement: &'a mut Statement<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        match &mut statement.statement_type {
+            StatementType::Module { name, statements } =>
+                self.pass_module(name, statements)?,
+            StatementType::Import { name } => self.pass_import(name)?,
+            StatementType::Block { body } => self.pass_block(body)?,
+            StatementType::VariableDeclaration { expression, name } =>
+                self.pass_variable_declaration(name, expression)?,
+            StatementType::ClassDeclaration {
+                name,
+                methods,
+                static_methods,
+                setters,
+                getters,
+                superclass,
+            } => self.pass_class_declaration(name, methods, static_methods, setters, getters, superclass)?,
+            StatementType::TraitDeclaration { name, .. } =>
+                self.pass_trait_declaration(name)?,
+            StatementType::TraitImplementation {
+                class_name,
+                trait_name,
+                methods,
+                static_methods,
+                setters,
+                getters,
+                ..
+            } => self.pass_trait_implementation(class_name, trait_name, methods, static_methods, setters, getters)?,
+            StatementType::FunctionDeclaration {
+                name,
+                arguments,
+                body,
+            } => self.pass_function_declaration(name, arguments, body)?,
+            StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
+            StatementType::If {
+                condition,
+                then,
+                otherwise,
+            } => self.pass_if(condition, then, otherwise)?,
+            StatementType::PrintStatement { expression } => self.pass_print(expression)?,
+            StatementType::Return { value } => self.pass_return(value)?,
+            StatementType::While { condition, action } =>
+                self.pass_while(condition, action)?,
+            StatementType::Break => {}
+            StatementType::EOF => {}
+        };
+        Ok(())
+    }
+
+    fn pass_expression(&mut self, expression: &'a mut Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        let expression_id = expression.id();
+        match &mut expression.expression_type {
+            ExpressionType::IsType { value, checked_type } =>
+                self.pass_checked_type(value, checked_type)?,
+            ExpressionType::ModuleLiteral {
+                module, field,
+            } => self.pass_module_literal(module, field)?,
+            ExpressionType::Get { callee, .. } => self.pass_get(callee)?,
+            ExpressionType::Set { callee, value, .. } =>
+                self.pass_set(callee, value)?,
+            ExpressionType::VariableLiteral { identifier } => self.pass_variable_literal(identifier, expression_id)?,
+            ExpressionType::VariableAssignment {
+                identifier,
+                expression: expression_value,
+            } => self.pass_variable_assignment(identifier, expression_value, expression_id)?,
+            ExpressionType::Binary { left, right, operator } =>
+                self.pass_binary(left, right, operator)?,
+            ExpressionType::Call { callee, arguments } =>
+                self.pass_call(callee, arguments)?,
+            ExpressionType::Grouping { expression } => self.pass_grouping(expression)?,
+            ExpressionType::Conditional {
+                condition,
+                then_branch,
+                else_branch,
+            } => self.pass_conditional(condition, then_branch, else_branch)?,
+            ExpressionType::Unary { operand, operator } => self.pass_unary(operand, operator)?,
+            ExpressionType::ExpressionLiteral {
+                value
+            } => self.pass_expression_literal(value)?,
+            ExpressionType::AnonymousFunction { arguments, body } =>
+                self.pass_anonymous_function(arguments, body, expression_id)?,
+            ExpressionType::RepeatedElementArray { element, length } =>
+                self.pass_repeated_element_array(element, length)?,
+            ExpressionType::Array { elements } => self.pass_array(elements)?,
+            ExpressionType::ArrayElement { array, index } =>
+                self.pass_array_element(array, index)?,
+            ExpressionType::ArrayElementSet {
+                array,
+                index,
+                value,
+            } => self.pass_array_element_set(array, index, value)?,
+        };
+        Ok(())
+    }
+
+    fn pass_expression_statement(
+        &mut self,
+        expression: &'a mut Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(expression)
+    }
+
+    fn pass_expression_literal(&mut self, _value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        Ok(())
+    }
+
+    fn pass_module(
+        &mut self,
+        _name: &'a str,
+        statements: &'a mut [Box<Statement<'a>>],
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        for s in statements {
+            self.pass(s)?;
+        }
+        Ok(())
+    }
+
+    fn pass_import(
+        &mut self,
+        _name: &'a str,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        Ok(())
+    }
+
+    fn pass_block(
+        &mut self,
+        body: &'a mut [Box<Statement<'a>>],
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        for s in body {
+            self.pass(s)?;
+        }
+        Ok(())
+    }
+
+    fn pass_variable_declaration(
+        &mut self,
+        _name: &'a str,
+        expression: &'a mut Option<Expression<'a>>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        if let Some(e) = expression {
+            self.pass_expression(e)?;
+        }
+        Ok(())
+    }
+
+    fn pass_class_declaration(
+        &mut self,
+        _name: &'a str,
+        methods: &'a mut [Box<Statement<'a>>],
+        static_methods: &'a mut [Box<Statement<'a>>],
+        setters: &'a mut [Box<Statement<'a>>],
+        getters: &'a mut [Box<Statement<'a>>],
+        superclass: &'a mut Option<Expression<'a>>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        for ss in vec![methods, static_methods, setters, getters] {
+            for s in ss.iter_mut() {
+                self.pass(s)?;
+            }
+        }
+        if let Some(e) = superclass {
+            self.pass_expression(e)?;
+        }
+        Ok(())
+    }
+
+    fn pass_trait_declaration(
+        &mut self,
+        _name: &'a str,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        Ok(())
+    }
+
+    fn pass_trait_implementation(
+        &mut self,
+        class_name: &'a mut Expression<'a>,
+        trait_name: &'a mut Expression<'a>,
+        methods: &'a mut [Box<Statement<'a>>],
+        static_methods: &'a mut [Box<Statement<'a>>],
+        setters: &'a mut [Box<Statement<'a>>],
+        getters: &'a mut [Box<Statement<'a>>],
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(class_name)?;
+        self.pass_expression(trait_name)?;
+        for ss in vec![methods, static_methods, setters, getters] {
+            for s in ss {
+                self.pass(s)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn pass_function_declaration(
+        &mut self,
+        _name: &'a mut &'a str,
+        _arguments: &'a mut [&'a str],
+        body: &'a mut Vec<Box<Statement<'a>>>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        for s in body {
+            self.pass(s)?;
+        }
+        Ok(())
+    }
+
+    fn pass_if(
+        &mut self,
+        condition: &'a mut Expression<'a>,
+        then: &'a mut Statement<'a>,
+        otherwise: &'a mut Option<Box<Statement<'a>>>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(condition)?;
+        self.pass(then)?;
+        if let Some(o) = otherwise {
+            self.pass(o)?;
+        }
+        Ok(())
+    }
+
+    fn pass_print(&mut self, expression: &'a mut Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(expression)
+    }
+
+    fn pass_return(&mut self, expression: &'a mut Option<Expression<'a>>) -> Result<(), Vec<ProgramError<'a>>> {
+        if let Some(e) = expression {
+            self.pass_expression(e)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn pass_while(
+        &mut self,
+        condition: &'a mut Expression<'a>,
+        action: &'a mut Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(condition)?;
+        self.pass(action)
+    }
+
+    fn pass_checked_type(
+        &mut self,
+        value: &'a mut Expression<'a>,
+        checked_type: &'a mut Type<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(value)?;
+        if let Type::UserDefined(obj) = checked_type {
+            self.pass_expression(obj)?;
+        }
+        Ok(())
+    }
+
+    fn pass_module_literal(
+        &mut self,
+        _module: &'a str,
+        field: &'a mut Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(field)
+    }
+
+    fn pass_get(&mut self, callee: &'a mut Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(callee)
+    }
+
+    fn pass_set(
+        &mut self,
+        callee: &'a mut Expression<'a>,
+        value: &'a mut Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(callee)?;
+        self.pass_expression(value)
+    }
+
+    fn pass_variable_literal(
+        &mut self,
+        _identifier: & mut &'a str,
+        _expression_id: usize,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        Ok(())
+    }
+
+    fn pass_variable_assignment(
+        &mut self,
+        _identifier: &'a str,
+        expression: &'a mut Expression<'a>,
+        _expression_id: usize,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(expression)
+    }
+
+    fn pass_binary(
+        &mut self,
+        left: &'a mut Expression<'a>,
+        right: &'a mut Expression<'a>,
+        _operator: &'a TokenType<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(left)?;
+        self.pass_expression(right)
+    }
+
+    fn pass_call(
+        &mut self,
+        callee: &'a mut Expression<'a>,
+        arguments: &'a mut [Box<Expression<'a>>],
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(callee)?;
+        arguments
+            .iter_mut()
+            .map(|a| self.pass_expression(a))
+            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
+        Ok(())
+    }
+
+    fn pass_grouping(&mut self, expression: &'a mut Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(expression)
+    }
+
+    fn pass_conditional(
+        &mut self,
+        condition: &'a mut Expression<'a>,
+        then_branch: &'a mut Expression<'a>,
+        else_branch: &'a mut Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(condition)?;
+        self.pass_expression(then_branch)?;
+        self.pass_expression(else_branch)
+    }
+
+    fn pass_unary(
+        &mut self,
+        operand: &'a mut Expression<'a>,
+        _operator: &'a TokenType<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(operand)
+    }
+
+    fn pass_anonymous_function(
+        &mut self,
+        _arguments: &'a mut [&'a str],
+        body: &'a mut [Statement<'a>],
+        _expression_id: usize,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        for s in body {
+            self.pass(s)?;
+        }
+        Ok(())
+    }
+
+    fn pass_repeated_element_array(&mut self, element: &'a mut Expression<'a>, length: &'a mut Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(length)?;
+        self.pass_expression(element)
+    }
+
+    fn pass_array(&mut self, elements: &'a mut [Box<Expression<'a>>]) -> Result<(), Vec<ProgramError<'a>>> {
+        for element in elements {
+            self.pass_expression(element)?;
+        }
+        Ok(())
+    }
+
+    fn pass_array_element(&mut self, array: &'a mut Expression<'a>, index: &'a mut Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(array)?;
+        self.pass_expression(index)
+    }
+
+    fn pass_array_element_set(&mut self, array: &'a mut Expression<'a>, index: &'a mut Expression<'a>, value: &'a mut Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(array)?;
+        self.pass_expression(index)?;
+        self.pass_expression(value)
+    }
+}
+
 pub trait Pass<'a, R> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<R, Vec<ProgramError<'a>>>;
 

@@ -164,6 +164,9 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         body: &'a [Box<Statement<'a>>],
         _statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
+        if self.scopes.len() > 1 {
+            return Ok(())
+        }
         let constant = self.add_function(name, arguments, body.iter().map(|i| i.as_ref()))?;
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant),

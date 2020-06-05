@@ -1,9 +1,10 @@
 #![feature(exact_size_is_empty)]
+#![feature(vec_remove_item)]
 use failure::Error;
 use parser::lexer::Lexer;
 use parser::parser::Parser;
 use parser::resolver::Resolver;
-use parser::types::{Pass, ProgramError, Literal, DataKeyword, SourceCodeLocation};
+use parser::types::{MutPass, Pass, ProgramError, Literal, DataKeyword, SourceCodeLocation};
 use std::env;
 use std::env::Args;
 use std::io::{Read, Write};
@@ -14,8 +15,10 @@ use smoked::instruction::Instruction;
 use smoked::serde::to_bytes;
 use std::collections::HashMap;
 use crate::compiler::ConstantValues;
+use crate::lambda_lifting::LambdaLifting;
 
 mod compiler;
+mod lambda_lifting;
 
 struct Config {
     paths: Vec<String>,
@@ -132,9 +135,10 @@ fn main() {
             let parser = Parser::new(ts.into_iter().peekable());
             parser.parse()
         });
-    let ss = handle_result(result);
+    let mut ss = handle_result(result);
     let mut resolver = Resolver::new();
     let locals = handle_result(resolver.run(&ss));
+    let ss = handle_result(LambdaLifting::new(locals.clone()).run(&mut ss));
     let mut c = compiler::Compiler::new(locals);
     let instructions = handle_result(c.run(&ss));
     let (literals, locations) = (c.constants, c.locations);
