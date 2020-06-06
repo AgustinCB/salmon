@@ -97,7 +97,9 @@ impl<'a> Compiler<'a> {
         }
         self.scopes.push(new_scope);
         for s in body {
-            self.pass(s)?;
+            if !s.is_function_declaration() {
+                self.pass(s)?;
+            }
         }
         if prev_functions_size != self.function_instructions.len() &&
             self.function_instructions.last().map(|i| i.instruction_type != InstructionType::Return)

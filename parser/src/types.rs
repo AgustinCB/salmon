@@ -330,6 +330,13 @@ impl<'a> Statement<'a> {
             message: message.to_owned(),
         }
     }
+
+    pub fn is_function_declaration(&self) -> bool {
+        match self.statement_type {
+            StatementType::FunctionDeclaration {..} => true,
+            _ => false,
+        }
+    }
 }
 
 pub trait MutPass<'a, R> {
