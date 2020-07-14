@@ -4,7 +4,7 @@ use failure::Error;
 use parser::lexer::Lexer;
 use parser::parser::Parser;
 use parser::resolver::Resolver;
-use parser::types::{MutPass, Pass, ProgramError, Literal, DataKeyword, SourceCodeLocation};
+use parser::types::{MutPass, Pass, ProgramError, Literal, DataKeyword, SourceCodeLocation, Statement};
 use std::env;
 use std::env::Args;
 use std::io::{Read, Write};
@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use crate::compiler::ConstantValues;
 use crate::lambda_lifting::LambdaLifting;
 
+mod changes;
 mod compiler;
 mod lambda_lifting;
 
@@ -135,10 +136,12 @@ fn main() {
             let parser = Parser::new(ts.into_iter().peekable());
             parser.parse()
         });
-    let mut ss = handle_result(result);
-    let mut resolver = Resolver::new();
-    let locals = handle_result(resolver.run(&ss));
-    let ss = handle_result(LambdaLifting::new(locals.clone()).run(&mut ss));
+    let ss = handle_result(result);
+    let locals = handle_result(Resolver::new().run(&ss));
+    let (mut ss, changes) = handle_result(LambdaLifting::new(locals.clone()).run(&ss));
+    let ss_ref: *mut Vec<Statement<'_>> = &mut ss as *mut _;
+    handle_result(changes::Changes::new(changes).run(unsafe { ss_ref.as_mut() }.unwrap()));
+    let locals = handle_result(Resolver::new().run(&ss));
     let mut c = compiler::Compiler::new(locals);
     let instructions = handle_result(c.run(&ss));
     let (literals, locations) = (c.constants, c.locations);
