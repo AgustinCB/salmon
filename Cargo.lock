@@ -489,8 +489,8 @@ dependencies = [
 
 [[package]]
 name = "sc"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+version = "0.2.3"
+source = "git+https://github.com/AgustinCB/syscall.rs#7ff94a68cdf2b5aa56cfe9267349dafdb82aaefa"
 
 [[package]]
 name = "scopeguard"
@@ -542,7 +542,7 @@ dependencies = [
  "cpu 0.1.1",
  "failure 0.1.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "sc 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "sc 0.2.3 (git+https://github.com/AgustinCB/syscall.rs)",
 ]
 
 [[package]]
@@ -800,7 +800,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum rustc_version 0.2.3 (registry+https://github.com/rust-lang/crates.io-index)" = "138e3e0acb6c9fb258b19b67cb8abd63c00679d2851805ea151465464fe9030a"
 "checksum ryu 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "bfa8506c1de11c9c4e4c38863ccbe02a305c8188e85a05a784c9e11e1c3910c8"
 "checksum same-file 1.0.6 (registry+https://github.com/rust-lang/crates.io-index)" = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
-"checksum sc 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "4ebbb026ba4a707c25caec2db5ef59ad8b41f7ad77cad06257e06229c891f376"
+"checksum sc 0.2.3 (git+https://github.com/AgustinCB/syscall.rs)" = "<none>"
 "checksum scopeguard 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)" = "b42e15e59b18a828bbf5c58ea01debb36b9b096346de35d941dcb89009f24a0d"
 "checksum semver 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)" = "1d7eb9ef2c18661902cc47e535f9bc51b78acd254da71d375c2f6720d9a40403"
 "checksum semver-parser 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)" = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"

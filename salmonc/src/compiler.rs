@@ -60,6 +60,16 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    fn get_write_syscall_number_constant(&mut self) -> usize {
+        self.constant_from_literal(ConstantValues::Literal(Literal::Integer(4)))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn get_write_syscall_number_constant(&mut self) -> usize {
+        self.constant_from_literal(ConstantValues::Literal(Literal::Integer(1)))
+    }
+
     fn toggle_selection(&mut self, selection: BufferSelection) {
         self.toggle_selection = selection;
     }
@@ -190,6 +200,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
 
     fn pass_print(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         let c0 = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(1)));
+        let syscall = self.get_write_syscall_number_constant();
         let c1 = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(3)));
         let newline = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString("\n")));
         self.add_instruction(Instruction {
@@ -226,7 +237,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             location: self.locations.len() - 1,
         });
         self.add_instruction(Instruction {
-            instruction_type: InstructionType::Constant(c0),
+            instruction_type: InstructionType::Constant(syscall),
             location: self.locations.len() - 1,
         });
         self.add_instruction(Instruction {
