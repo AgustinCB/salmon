@@ -33,7 +33,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<LambdaLiftingResult<'a>, Vec<ProgramError<'a>>> {
         for s in ss {
             self.current_location = Some(s.location.clone());
-            if self.scopes.len() == 1 {
+            if self.scopes.len() == 1 && !s.is_function_declaration() {
                 self.output.push(s.clone());
             }
             self.pass(s)?;
@@ -44,19 +44,27 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
     fn pass_function_declaration(
         &mut self,
         name: &'a str,
-        _arguments: &'a [&'a str],
+        arguments: &'a [&'a str],
         body: &'a [Box<Statement<'a>>],
-        _statement: &'a Statement<'a>,
+        statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
+        let new_function_name = leak_reference(format!("@function{}", self.function_counter));
+        self.function_counter += 1;
+        let scope = self.scopes.len()-1;
+        self.scopes[scope].insert(name, new_function_name);
+        self.output.push(Statement {
+            location: statement.location.clone(),
+            statement_type: StatementType::FunctionDeclaration {
+                name: new_function_name,
+                arguments: arguments.to_vec(),
+                body: body.to_vec(),
+            },
+        });
         self.scopes.push(HashMap::default());
         for s in body.iter() {
             self.pass(s)?;
         }
         self.scopes.pop();
-        let new_function_name = leak_reference(format!("@function{}", self.function_counter));
-        self.function_counter += 1;
-        let scope = self.scopes.len()-1;
-        self.scopes[scope].insert(name, new_function_name);
         Ok(())
     }
 
