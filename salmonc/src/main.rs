@@ -114,6 +114,20 @@ fn create_vm<'a>(
     Ok(to_bytes(&constants, &locations, &memory, &rom))
 }
 
+fn rearrenge_function_declarations<'a>(ss: Vec<Statement<'a>>) -> Vec<Statement<'a>> {
+    let mut functions = vec![];
+    let mut others = vec![];
+    for s in ss {
+        if s.is_function_declaration() {
+            functions.push(s);
+        } else {
+            others.push(s)
+        }
+    }
+    functions.extend_from_slice(&others);
+    functions
+}
+
 fn main() {
     let mut args = env::args();
     args.next();
@@ -141,6 +155,7 @@ fn main() {
     let (mut ss, changes) = handle_result(LambdaLifting::new(locals.clone()).run(&ss));
     let ss_ref: *mut Vec<Statement<'_>> = &mut ss as *mut _;
     handle_result(changes::Changes::new(changes).run(unsafe { ss_ref.as_mut() }.unwrap()));
+    let ss = rearrenge_function_declarations(ss);
     let locals = handle_result(Resolver::new().run(&ss));
     let mut c = compiler::Compiler::new(locals);
     let instructions = handle_result(c.run(&ss));
