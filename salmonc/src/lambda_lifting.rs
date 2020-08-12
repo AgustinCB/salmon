@@ -6,10 +6,12 @@ fn leak_reference<'a, T>(s: T) -> &'a T {
 }
 
 pub struct LambdaLifting<'a> {
+    change_name: bool,
     changes: HashMap<usize, ExpressionType<'a>>,
     current_location: Option<SourceCodeLocation<'a>>,
     function_counter: usize,
     locals: HashMap<usize, usize>,
+    missed_locals: Vec<Vec<&'a str>>,
     output: Vec<Statement<'a>>,
     scopes: Vec<HashMap<&'a str, &'a str>>,
 }
@@ -17,9 +19,11 @@ pub struct LambdaLifting<'a> {
 impl<'a> LambdaLifting<'a> {
     pub fn new(locals: HashMap<usize, usize>) -> LambdaLifting<'a> {
         LambdaLifting {
+            change_name: true,
             changes: HashMap::default(),
             current_location: None,
             function_counter: 0,
+            missed_locals: Vec::default(),
             output: Vec::default(),
             scopes: vec![HashMap::default()],
             locals,
@@ -48,23 +52,32 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         body: &'a [Box<Statement<'a>>],
         statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        let new_function_name = leak_reference(format!("@function{}", self.function_counter));
-        self.function_counter += 1;
-        let scope = self.scopes.len()-1;
-        self.scopes[scope].insert(name, new_function_name);
+        let new_function_name = if self.change_name {
+            let new_function_name = leak_reference(format!("@function{}", self.function_counter));
+            self.function_counter += 1;
+            let scope = self.scopes.len()-1;
+            self.scopes[scope].insert(name, new_function_name);
+            new_function_name
+        } else {
+            name
+        };
+        self.change_name = true;
+        self.scopes.push(HashMap::default());
+        self.missed_locals.push(Vec::default());
+        for s in body.iter() {
+            self.pass(s)?;
+        }
+        self.scopes.pop();
+        let missed_locals = self.missed_locals.pop().unwrap();
         self.output.push(Statement {
             location: statement.location.clone(),
             statement_type: StatementType::FunctionDeclaration {
                 name: new_function_name,
                 arguments: arguments.to_vec(),
                 body: body.to_vec(),
+                context_variables: missed_locals,
             },
         });
-        self.scopes.push(HashMap::default());
-        for s in body.iter() {
-            self.pass(s)?;
-        }
-        self.scopes.pop();
         Ok(())
     }
 
@@ -79,8 +92,20 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
                 self.changes.insert(expression_id, ExpressionType::VariableLiteral {
                     identifier: new_identifier,
                 });
+            } else if scope > 0 && scope < self.missed_locals.len() - 1 {
+                self.missed_locals.last_mut().unwrap().push(identifier);
             }
         }
+        Ok(())
+    }
+
+    fn pass_variable_assignment(
+        &mut self,
+        _identifier: &'a str,
+        value: &'a Expression<'a>,
+        _expression: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(value)?;
         Ok(())
     }
 
@@ -97,10 +122,10 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
                 name: new_function_name,
                 arguments: arguments.to_vec(),
                 body: body.iter().cloned().map(Box::new).collect(),
+                context_variables: vec![],
             },
             location: self.current_location.clone().unwrap(),
         };
-        self.output.push(function_definition.clone());
         /*
          * This is a bit of black magic. What is happening here:
          * - We get the static, raw pointer to a leaked reference to function_definition.
@@ -120,6 +145,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
          * values.
          */
         let r = Box::into_raw(Box::new(function_definition));
+        self.change_name = false;
         self.pass(unsafe { r.as_ref() }.unwrap())?;
         let _ = unsafe { Box::from_raw(r) };
         self.changes.insert(expression.id(), ExpressionType::VariableLiteral {

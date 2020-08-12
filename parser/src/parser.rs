@@ -807,6 +807,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         };
         Ok(Statement {
             statement_type: StatementType::FunctionDeclaration {
+                context_variables: vec![],
                 name,
                 arguments,
                 body,
@@ -2467,7 +2468,8 @@ mod test {
                                 ),
                             }
                         }),
-                    ]
+                    ],
+                    context_variables: vec![],
                 },
                 location: location.clone(),
             }

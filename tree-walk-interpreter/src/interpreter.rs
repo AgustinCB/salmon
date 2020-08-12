@@ -552,6 +552,7 @@ impl<'a> Interpreter<'a> {
                 name,
                 arguments,
                 body,
+                ..
             } => {
                 let environments = self.state.borrow().get_environments();
                 self.state.borrow_mut().insert(
@@ -652,7 +653,7 @@ impl<'a> Interpreter<'a> {
         lexer.parse()
             .and_then(|tt| {
                 let parser = Parser::new(tt.into_iter().peekable());
-                parser.parse()
+                parser.parse().map(|t| t)
             })
             .map_err(|ee| ee[0].clone())
     }
@@ -1228,6 +1229,7 @@ mod test_statement {
                     statement_type: StatementType::EOF,
                     location: location.clone(),
                 })],
+                context_variables: vec![],
             },
             location: location.clone(),
         };

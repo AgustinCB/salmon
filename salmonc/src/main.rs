@@ -114,7 +114,7 @@ fn create_vm<'a>(
     Ok(to_bytes(&constants, &locations, &memory, &rom))
 }
 
-fn rearrenge_function_declarations<'a>(ss: Vec<Statement<'a>>) -> Vec<Statement<'a>> {
+fn rearrenge_function_declarations(ss: Vec<Statement>) -> Vec<Statement> {
     let mut functions = vec![];
     let mut others = vec![];
     for s in ss {

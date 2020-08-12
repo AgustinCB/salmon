@@ -44,7 +44,7 @@ impl<'a> MutPass<'a, ()> for Changes<'a> {
             ExpressionType::Binary { left, right, operator } =>
                 self.pass_binary(left, right, operator)?,
             ExpressionType::Call { callee, arguments } =>
-                self.pass_call(callee, arguments)?,
+                self.pass_call(callee, arguments, expression_id)?,
             ExpressionType::Grouping { expression } => self.pass_grouping(expression)?,
             ExpressionType::Conditional {
                 condition,

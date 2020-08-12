@@ -122,6 +122,7 @@ impl<'a> Expression<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct ExpressionFactory {
     counter: usize,
 }
@@ -300,6 +301,7 @@ pub enum StatementType<'a> {
         name: &'a str,
         arguments: Vec<&'a str>,
         body: Vec<Box<Statement<'a>>>,
+        context_variables: Vec<&'a str>,
     },
     Block {
         body: Vec<Box<Statement<'a>>>,
@@ -373,6 +375,7 @@ pub trait MutPass<'a, R> {
                 name,
                 arguments,
                 body,
+                ..
             } => self.pass_function_declaration(name, arguments, body)?,
             StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
             StatementType::If {
@@ -409,7 +412,7 @@ pub trait MutPass<'a, R> {
             ExpressionType::Binary { left, right, operator } =>
                 self.pass_binary(left, right, operator)?,
             ExpressionType::Call { callee, arguments } =>
-                self.pass_call(callee, arguments)?,
+                self.pass_call(callee, arguments, expression_id)?,
             ExpressionType::Grouping { expression } => self.pass_grouping(expression)?,
             ExpressionType::Conditional {
                 condition,
@@ -643,6 +646,7 @@ pub trait MutPass<'a, R> {
         &mut self,
         callee: &'a mut Expression<'a>,
         arguments: &'a mut [Box<Expression<'a>>],
+        _expression_id: usize,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(callee)?;
         arguments
@@ -745,6 +749,7 @@ pub trait Pass<'a, R> {
                 name,
                 arguments,
                 body,
+                ..
             } => self.pass_function_declaration(name, arguments, body, statement)?,
             StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
             StatementType::If {
@@ -780,7 +785,7 @@ pub trait Pass<'a, R> {
             ExpressionType::Binary { left, right, operator } =>
                 self.pass_binary(left, right, operator)?,
             ExpressionType::Call { callee, arguments } =>
-                self.pass_call(callee, arguments)?,
+                self.pass_call(callee, arguments, expression.id())?,
             ExpressionType::Grouping { expression } => self.pass_grouping(expression)?,
             ExpressionType::Conditional {
                 condition,
@@ -1022,6 +1027,7 @@ pub trait Pass<'a, R> {
         &mut self,
         callee: &'a Expression<'a>,
         arguments: &'a [Box<Expression<'a>>],
+        _expression_id: usize,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(callee)?;
         arguments

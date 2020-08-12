@@ -31,6 +31,7 @@ fn statement_list_to_function_hash_map<'a>(
                 arguments,
                 body,
                 name,
+                ..
             } => {
                 functions.insert(
                     name.clone(),
@@ -89,6 +90,7 @@ impl<'a> LoxClass<'a> {
                     arguments,
                     body,
                     name,
+                    ..
                 } => {
                     static_methods.push((
                         name.clone(),

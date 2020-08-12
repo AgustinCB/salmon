@@ -406,6 +406,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         &mut self,
         callee: &'a Expression<'a>,
         arguments: &'a [Box<Expression<'a>>],
+        _expression_id: usize,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         arguments
             .iter()
