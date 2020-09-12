@@ -749,8 +749,8 @@ pub trait Pass<'a, R> {
                 name,
                 arguments,
                 body,
-                ..
-            } => self.pass_function_declaration(name, arguments, body, statement)?,
+                context_variables,
+            } => self.pass_function_declaration(name, arguments, body, statement, context_variables)?,
             StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
             StatementType::If {
                 condition,
@@ -920,6 +920,7 @@ pub trait Pass<'a, R> {
         _arguments: &'a [&'a str],
         body: &'a [Box<Statement<'a>>],
         _statement: &'a Statement<'a>,
+        _context_variables: &'a [&'a str],
     ) -> Result<(), Vec<ProgramError<'a>>> {
         for s in body {
             self.pass(s)?;

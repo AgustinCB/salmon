@@ -88,7 +88,7 @@ fn create_vm<'a>(
             ConstantValues::Literal(Literal::Keyword(DataKeyword::True)) => constants.push(Value::Bool(true)),
             ConstantValues::Literal(Literal::Keyword(DataKeyword::False)) => constants.push(Value::Bool(false)),
             ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)) => constants.push(Value::Nil),
-            ConstantValues::Function { arity, ip, .. } => constants.push(Value::Function { ip: *ip, arity: *arity}),
+            ConstantValues::Function { arity, ip, .. } => constants.push(Value::Function { ip: *ip, arity: *arity, uplifts: None }),
         }
     }
 

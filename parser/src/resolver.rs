@@ -267,7 +267,8 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
         name: &'a str,
         arguments: &'a [&'a str],
         body: &'a [Box<Statement<'a>>],
-        statement: &'a Statement<'a>
+        statement: &'a Statement<'a>,
+        _context_variables: &'a [&'a str],
     ) -> Result<(), Vec<ProgramError<'a>>> {
         self.declare(name, &statement.location)
             .map_err(|e| vec![e])?;

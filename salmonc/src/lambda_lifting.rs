@@ -51,6 +51,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         arguments: &'a [&'a str],
         body: &'a [Box<Statement<'a>>],
         statement: &'a Statement<'a>,
+        _context_variables: &'a [&'a str],
     ) -> Result<(), Vec<ProgramError<'a>>> {
         let new_function_name = if self.change_name {
             let new_function_name = leak_reference(format!("@function{}", self.function_counter));

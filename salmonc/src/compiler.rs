@@ -174,7 +174,8 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         name: &'a str,
         arguments: &'a [&'a str],
         body: &'a [Box<Statement<'a>>],
-        _statement: &'a Statement<'a>,
+        statement: &'a Statement<'a>,
+        context_variables: &'a [&'a str],
     ) -> Result<(), Vec<ProgramError<'a>>> {
         if self.scopes.len() > 1 {
             return Ok(())
@@ -195,6 +196,41 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             instruction_type: InstructionType::SetGlobal(global_index),
             location: self.locations.len() - 1,
         });
+        if context_variables.len() > 0 {
+            let array_size = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(context_variables.len() as _)));
+            for context_variable in context_variables {
+                let scope = (&self.scopes[1..]).iter().rev()
+                    .find(|scope| scope.get(context_variable).is_some())
+                    .map(|scope| *scope.get(context_variable).unwrap());
+                if let Some(scope) = scope {
+                    self.add_instruction(Instruction {
+                        instruction_type: InstructionType::Uplift(scope),
+                        location: self.locations.len() - 1,
+                    });
+                } else {
+                    return Err(vec![ProgramError {
+                        location: statement.location.clone(),
+                        message: format!("Context variable {} was not found", context_variable),
+                    }]);
+                }
+            }
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(array_size),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::ArrayAlloc,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::MultiArraySet,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::AttachArray(constant),
+                location: self.locations.len() - 1,
+            });
+        }
         Ok(())
     }
 
@@ -483,15 +519,10 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
 
     fn pass_anonymous_function(
         &mut self,
-        arguments: &'a [&'a str],
-        body: &'a [Statement<'a>],
+        _arguments: &'a [&'a str],
+        _body: &'a [Statement<'a>],
         _expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        let constant = self.add_function("@anonymous", arguments, body.iter())?;
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::Constant(constant),
-            location: self.locations.len() - 1,
-        });
         Ok(())
     }
 
