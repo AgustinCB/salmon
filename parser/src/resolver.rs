@@ -2,6 +2,7 @@ use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation,
 use ahash::{AHashMap as HashMap};
 
 pub struct Resolver<'a> {
+    check_used: bool,
     scopes: Vec<HashMap<&'a str, bool>>,
     uses: Vec<HashMap<&'a str, usize>>,
     locations: Vec<HashMap<&'a str, &'a SourceCodeLocation<'a>>>,
@@ -11,6 +12,16 @@ pub struct Resolver<'a> {
 impl<'a> Resolver<'a> {
     pub fn new() -> Resolver<'a> {
         Resolver {
+            check_used: true,
+            locals: HashMap::default(),
+            locations: vec![HashMap::default()],
+            scopes: vec![HashMap::default()],
+            uses: vec![HashMap::default()],
+        }
+    }
+    pub fn new_without_check_used() -> Resolver<'a> {
+        Resolver {
+            check_used: false,
             locals: HashMap::default(),
             locations: vec![HashMap::default()],
             scopes: vec![HashMap::default()],
@@ -33,7 +44,7 @@ impl<'a> Resolver<'a> {
             variables.insert("this", 1);
             let errors: Vec<ProgramError<'a>> = variables
                 .iter()
-                .filter(|(_, uses)| **uses == 0)
+                .filter(|(_, uses)| self.check_used && **uses == 0)
                 .map(|p| ProgramError {
                     message: format!("Variable `{}` never used.", *p.0),
                     location: locations[*p.0].clone(),
@@ -120,6 +131,7 @@ impl<'a> Resolver<'a> {
     fn resolve_function<'b>(
         &mut self,
         arguments: &'a [&'a str],
+        context_variables: Option<&'a [&'a str]>,
         body: &'b [&'a Statement<'a>],
         location: &'a SourceCodeLocation<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
@@ -127,6 +139,12 @@ impl<'a> Resolver<'a> {
         for arg in arguments {
             self.declare(arg, location).map_err(|e| vec![e])?;
             self.define(arg);
+        }
+        if let Some(context_variables) = context_variables {
+            for arg in context_variables {
+                self.declare(arg, location).map_err(|e| vec![e])?;
+                self.define(arg);
+            }
         }
         body.iter()
             .map(|s| self.pass(s))
@@ -268,14 +286,14 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
         arguments: &'a [&'a str],
         body: &'a [Box<Statement<'a>>],
         statement: &'a Statement<'a>,
-        _context_variables: &'a [&'a str],
+        context_variables: &'a [&'a str],
     ) -> Result<(), Vec<ProgramError<'a>>> {
         self.declare(name, &statement.location)
             .map_err(|e| vec![e])?;
         self.define(name);
         let body = body.iter().map(|s| &(**s)).collect::<Vec<&Statement>>();
         self.resolve_function(
-            arguments, &body, &statement.location
+            arguments, Some(context_variables), &body, &statement.location
         )
     }
 
@@ -315,6 +333,6 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
         expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         let body = body.iter().collect::<Vec<&'a Statement>>();
-        self.resolve_function(arguments, &body, &expression.location)
+        self.resolve_function(arguments, None, &body, &expression.location)
     }
 }

@@ -1,5 +1,5 @@
 use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression};
-use ahash::{AHashMap as HashMap};
+use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 
 fn leak_reference<'a, T>(s: T) -> &'a T {
     Box::leak(Box::new(s))
@@ -11,7 +11,7 @@ pub struct LambdaLifting<'a> {
     current_location: Option<SourceCodeLocation<'a>>,
     function_counter: usize,
     locals: HashMap<usize, usize>,
-    missed_locals: Vec<Vec<&'a str>>,
+    missed_locals: Vec<HashSet<&'a str>>,
     output: Vec<Statement<'a>>,
     scopes: Vec<HashMap<&'a str, &'a str>>,
 }
@@ -64,18 +64,34 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         };
         self.change_name = true;
         self.scopes.push(HashMap::default());
-        self.missed_locals.push(Vec::default());
+        self.missed_locals.push(HashSet::default());
+        let mut new_body = vec![];
         for s in body.iter() {
             self.pass(s)?;
+            let statement = match &s.statement_type {
+                StatementType::FunctionDeclaration { .. } => {
+                    if let Some(StatementType::FunctionDeclaration { name, .. }) =
+                        self.output.last().map(|s| &s.statement_type) {
+                        Box::new(Statement {
+                            location: s.location.clone(),
+                            statement_type: StatementType::UpliftFunctionVariables(name),
+                        })
+                    } else {
+                        panic!("Last statement should be a function!")
+                    }
+                },
+                _ => s.clone(),
+            };
+            new_body.push(statement);
         }
         self.scopes.pop();
-        let missed_locals = self.missed_locals.pop().unwrap();
+        let missed_locals = self.missed_locals.pop().unwrap().iter().cloned().collect::<Vec<&str>>();
         self.output.push(Statement {
             location: statement.location.clone(),
             statement_type: StatementType::FunctionDeclaration {
                 name: new_function_name,
                 arguments: arguments.to_vec(),
-                body: body.to_vec(),
+                body: new_body,
                 context_variables: missed_locals,
             },
         });
@@ -93,8 +109,9 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
                 self.changes.insert(expression_id, ExpressionType::VariableLiteral {
                     identifier: new_identifier,
                 });
-            } else if scope > 0 && scope < self.missed_locals.len() - 1 {
-                self.missed_locals.last_mut().unwrap().push(identifier);
+            }
+            if scope > 0 && scope < self.scopes.len() - 1 {
+                self.missed_locals.last_mut().unwrap().insert(identifier);
             }
         }
         Ok(())

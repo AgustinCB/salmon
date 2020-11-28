@@ -1,14 +1,15 @@
 use ahash::{AHashMap as HashMap};
-use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType};
+use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword};
 use smoked::instruction::{Instruction, InstructionType};
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum ConstantValues<'a> {
     Literal(Literal<'a>),
     Function {
         arity: usize,
         ip: usize,
         name: &'a str,
+        context_variables: &'a [&'a str],
     }
 }
 
@@ -92,24 +93,27 @@ impl<'a> Compiler<'a> {
         name: &'a str,
         arguments: &'a [&'a str],
         body: I,
+        context_variables: &'a [&'a str],
     ) -> Result<usize, Vec<ProgramError<'a>>> {
         let constant = self.constant_from_literal(ConstantValues::Function {
             arity: arguments.len(),
             ip: self.function_instructions.len(),
+            context_variables,
             name,
         });
         let previous = self.toggle_selection;
         let prev_functions_size = self.function_instructions.len();
         self.toggle_selection(BufferSelection::Function);
         let mut new_scope = HashMap::default();
-        for (i, n) in arguments.iter().cloned().enumerate() {
+        for (i, n) in context_variables.iter().cloned().enumerate() {
             new_scope.insert(n, i);
+        }
+        for (i, n) in arguments.iter().cloned().enumerate() {
+            new_scope.insert(n, i+context_variables.len());
         }
         self.scopes.push(new_scope);
         for s in body {
-            if !s.is_function_declaration() {
-                self.pass(s)?;
-            }
+            self.pass(s)?;
         }
         if prev_functions_size != self.function_instructions.len() &&
             self.function_instructions.last().map(|i| i.instruction_type != InstructionType::Return)
@@ -122,6 +126,20 @@ impl<'a> Compiler<'a> {
         self.scopes.pop();
         self.toggle_selection(previous);
         Ok(constant)
+    }
+
+    fn add_set_instruction(&mut self, scope_id: usize, var_id: usize) {
+        if scope_id == 0 {
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::SetGlobal(var_id),
+                location: self.locations.len() - 1,
+            });
+        } else {
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::SetLocal(var_id),
+                location: self.locations.len() - 1,
+            });
+        }
     }
 }
 
@@ -169,65 +187,117 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_uplift_function_variables(
+        &mut self,
+        name: &'a str,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let constant = match self.constants.iter().position(|i| {
+            return if let ConstantValues::Function { name: fname, context_variables, .. } = i {
+                *fname == name && context_variables.len() > 0
+            } else {
+                false
+            };
+        }) {
+            Some(i) => i,
+            None => return Ok(()),
+        };
+        let context_variables = if let ConstantValues::Function { context_variables, .. } = &self.constants[constant] {
+            *context_variables
+        } else {
+            return Err(vec![ProgramError {
+                location: self.locations.last().unwrap().clone(),
+                message: "Constant is not a function".to_string()
+            }]);
+        };
+        let array_size = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(context_variables.len() as _)));
+        for context_variable in context_variables {
+            let scope = (&self.scopes[1..]).iter().rev()
+                .find(|scope| scope.get(context_variable).is_some())
+                .map(|scope| *scope.get(context_variable).unwrap());
+            if let Some(scope) = scope {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Uplift(scope),
+                    location: self.locations.len() - 1,
+                });
+            } else {
+                return Err(vec![ProgramError {
+                    location: self.locations.last().unwrap().clone(),
+                    message: format!("Context variable {} was not found", context_variable),
+                }]);
+            }
+        }
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(array_size),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ArrayAlloc,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::MultiArraySet,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::AttachArray(constant),
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_variable_declaration(
+        &mut self,
+        identifier: &'a str,
+        expression: &'a Option<Expression<'a>>,
+        _statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let scope_id = self.scopes.len() - 1;
+        let var_id = self.scopes[scope_id].len();
+        self.scopes[scope_id].insert(identifier, var_id);
+        if let Some(e) = expression {
+            self.pass_expression(e)?;
+        } else {
+            let c0 = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(c0),
+                location: self.locations.len() - 1,
+            });
+        }
+        self.add_set_instruction(scope_id, var_id);
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Pop,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_function_declaration(
         &mut self,
         name: &'a str,
         arguments: &'a [&'a str],
         body: &'a [Box<Statement<'a>>],
-        statement: &'a Statement<'a>,
+        _statement: &'a Statement<'a>,
         context_variables: &'a [&'a str],
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        if self.scopes.len() > 1 {
-            return Ok(())
-        }
-        let constant = self.add_function(name, arguments, body.iter().map(|i| i.as_ref()))?;
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::Constant(constant),
-            location: self.locations.len() - 1,
-        });
-        let global_index = if let Some(global_index) = self.scopes[0].get(name) {
-            *global_index
-        } else {
-            let global_index = self.scopes[0].len();
-            self.scopes[0].insert(name, global_index);
-            global_index
-        };
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::SetGlobal(global_index),
-            location: self.locations.len() - 1,
-        });
-        if context_variables.len() > 0 {
-            let array_size = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(context_variables.len() as _)));
-            for context_variable in context_variables {
-                let scope = (&self.scopes[1..]).iter().rev()
-                    .find(|scope| scope.get(context_variable).is_some())
-                    .map(|scope| *scope.get(context_variable).unwrap());
-                if let Some(scope) = scope {
-                    self.add_instruction(Instruction {
-                        instruction_type: InstructionType::Uplift(scope),
-                        location: self.locations.len() - 1,
-                    });
-                } else {
-                    return Err(vec![ProgramError {
-                        location: statement.location.clone(),
-                        message: format!("Context variable {} was not found", context_variable),
-                    }]);
-                }
-            }
+        if self.scopes.len() == 1 {
+            let constant = self.add_function(name, arguments, body.iter().map(|i| i.as_ref()), context_variables)?;
             self.add_instruction(Instruction {
-                instruction_type: InstructionType::Constant(array_size),
+                instruction_type: InstructionType::Constant(constant),
+                location: self.locations.len() - 1,
+            });
+            let global_index = if let Some(global_index) = self.scopes[0].get(name) {
+                *global_index
+            } else {
+                let global_index = self.scopes[0].len();
+                self.scopes[0].insert(name, global_index);
+                global_index
+            };
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::SetGlobal(global_index),
                 location: self.locations.len() - 1,
             });
             self.add_instruction(Instruction {
-                instruction_type: InstructionType::ArrayAlloc,
-                location: self.locations.len() - 1,
-            });
-            self.add_instruction(Instruction {
-                instruction_type: InstructionType::MultiArraySet,
-                location: self.locations.len() - 1,
-            });
-            self.add_instruction(Instruction {
-                instruction_type: InstructionType::AttachArray(constant),
+                instruction_type: InstructionType::Pop,
                 location: self.locations.len() - 1,
             });
         }
@@ -340,30 +410,16 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         if let Some(scope_id) = self.locals.get(&expression.id()).cloned() {
-            let var_id = match self.scopes[0].get(identifier) {
+            let var_id = match self.scopes[scope_id].get(identifier) {
                 Some(id) => *id,
                 None => {
-                    let id = self.scopes[0].len();
-                    self.scopes[0].insert(identifier, id);
+                    let id = self.scopes[scope_id].len();
+                    self.scopes[scope_id].insert(identifier, id);
                     id
                 }
             };
             self.pass_expression(expression_value)?;
-            self.add_instruction(Instruction {
-                instruction_type: InstructionType::Push,
-                location: self.locations.len() - 1,
-            });
-            if scope_id == 0 {
-                self.add_instruction(Instruction {
-                    instruction_type: InstructionType::SetGlobal(var_id),
-                    location: self.locations.len() - 1,
-                });
-            } else {
-                self.add_instruction(Instruction {
-                    instruction_type: InstructionType::SetLocal(var_id),
-                    location: self.locations.len() - 1,
-                });
-            }
+            self.add_set_instruction(scope_id, var_id);
             Ok(())
         } else {
             Err(vec![ProgramError {

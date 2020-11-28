@@ -25,17 +25,22 @@ struct Config {
     paths: Vec<String>,
     input: Option<String>,
     output: Option<String>,
+    show_instructions: bool,
 }
 
 fn parse_config(args: &mut Args) -> Config {
     let mut input = None;
     let mut output = None;
     let mut paths = vec![".".to_owned()];
+    let mut show_instructions = false;
     while !args.is_empty() {
         let arg = args.next().unwrap();
         match arg.as_str() {
             "-p" | "--path" => {
                 paths.push(args.next().expect("Expected path"))
+            },
+            "-i" | "--instructions" => {
+                show_instructions = true;
             },
             f if input.is_none() => input = Some(f.to_owned()),
             f if input.is_some() && output.is_none() => output = Some(f.to_owned()),
@@ -46,6 +51,7 @@ fn parse_config(args: &mut Args) -> Config {
         input,
         output,
         paths,
+        show_instructions,
     }
 }
 
@@ -156,10 +162,15 @@ fn main() {
     let ss_ref: *mut Vec<Statement<'_>> = &mut ss as *mut _;
     handle_result(changes::Changes::new(changes).run(unsafe { ss_ref.as_mut() }.unwrap()));
     let ss = rearrenge_function_declarations(ss);
-    let locals = handle_result(Resolver::new().run(&ss));
+    let locals = handle_result(Resolver::new_without_check_used().run(&ss));
     let mut c = compiler::Compiler::new(locals);
     let instructions = handle_result(c.run(&ss));
     let (literals, locations) = (c.constants, c.locations);
-    let vm = create_vm(literals, locations, instructions).unwrap();
-    output.write_all(&vm).unwrap();
+    if config.show_instructions {
+        println!("Instructions: {:?}", instructions);
+        println!("Literals: {:?}", &literals);
+    } else {
+        let vm = create_vm(literals, locations, instructions).unwrap();
+        output.write_all(&vm).unwrap();
+    }
 }
