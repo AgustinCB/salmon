@@ -1,0 +1,17 @@
+fun test() {}
+
+print nil istype Nil;
+print nil istype Integer;
+print true istype Boolean;
+print true istype Integer;
+print 1 istype Integer;
+print 1 istype Float;
+print 1.0 istype Float;
+print 1.0 istype Integer;
+print "" istype String;
+print "" istype Integer;
+print [] istype Array;
+print [] istype String;
+print test istype Function;
+print test istype String;
+

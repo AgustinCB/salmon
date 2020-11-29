@@ -1,5 +1,5 @@
 use ahash::{AHashMap as HashMap};
-use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword};
+use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type};
 use smoked::instruction::{Instruction, InstructionType};
 
 #[derive(Debug, PartialEq)]
@@ -363,6 +363,34 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         };
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Return,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_checked_type(
+        &mut self,
+        value: &'a Expression<'a>,
+        checked_type: &'a Type,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(value)?;
+        let type_index = match checked_type {
+            Type::Nil => 0,
+            Type::Boolean => 1,
+            Type::Integer => 2,
+            Type::Float => 3,
+            Type::String => 4,
+            Type::Function => 5,
+            Type::Array => 6,
+            _ => {
+                return Err(vec![ProgramError {
+                    location: self.locations.last().unwrap().clone(),
+                    message: format!("Type checking for {:?} not implemented yet", checked_type),
+                }]);
+            }
+        };
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::CheckType(type_index),
             location: self.locations.len() - 1,
         });
         Ok(())
