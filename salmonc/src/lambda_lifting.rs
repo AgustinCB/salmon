@@ -1,4 +1,4 @@
-use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression};
+use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression, StatementFactory};
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 
 fn leak_reference<'a, T>(s: T) -> &'a T {
@@ -14,10 +14,11 @@ pub struct LambdaLifting<'a> {
     missed_locals: Vec<HashSet<&'a str>>,
     output: Vec<Statement<'a>>,
     scopes: Vec<HashMap<&'a str, &'a str>>,
+    statement_factory: StatementFactory,
 }
 
 impl<'a> LambdaLifting<'a> {
-    pub fn new(locals: HashMap<usize, usize>) -> LambdaLifting<'a> {
+    pub fn new(locals: HashMap<usize, usize>, statement_factory: StatementFactory) -> LambdaLifting<'a> {
         LambdaLifting {
             change_name: true,
             changes: HashMap::default(),
@@ -27,7 +28,49 @@ impl<'a> LambdaLifting<'a> {
             output: Vec::default(),
             scopes: vec![HashMap::default()],
             locals,
+            statement_factory,
         }
+    }
+
+    fn create_new_function(
+        &mut self,
+        arguments: &'a [&'a str],
+        body: &'a [Statement<'a>],
+    ) -> Result<&'static str, Vec<ProgramError<'a>>> {
+        let new_function_name = leak_reference(format!("@function{}", self.function_counter));
+        self.function_counter += 1;
+        let function_definition = self.statement_factory.new_statement(
+            self.current_location.clone().unwrap(),
+            StatementType::FunctionDeclaration {
+                name: new_function_name,
+                arguments: arguments.to_vec(),
+                body: body.iter().cloned().map(Box::new).collect(),
+                context_variables: vec![],
+            },
+        );
+        /*
+         * This is a bit of black magic. What is happening here:
+         * - We get the static, raw pointer to a leaked reference to function_definition.
+         * - We "pass" that pointer.
+         * - We then wrap it again into a Box to make sure it's properly cleaned after.
+         * Why we can't use references:
+         * - We cannot use a reference to `function-definition`, because is a scope lived and would
+         * not live for 'a.
+         * - We cannot use a reference to the last element in self.output because self does not live
+         * for 'a.
+         * - We cannot leak a Box, because we won't have any way to clean after: Since `pass` asks
+         * for the statement to live for 'a, and Box::from_raw requires a mutable reference, we won't
+         * be able to make the conversion.
+         * Why is this safe:
+         * The danger is that pass would store a reference to something inside function_definition
+         * that would later be dropped. However, this class does not do that and rather copies all
+         * values.
+         */
+        let r = Box::into_raw(Box::new(function_definition));
+        self.change_name = false;
+        self.pass(unsafe { r.as_ref() }.unwrap())?;
+        let _ = unsafe { Box::from_raw(r) };
+        Ok(new_function_name)
     }
 }
 
@@ -43,6 +86,16 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
             self.pass(s)?;
         }
         Ok((self.output.clone(), self.changes.clone()))
+    }
+
+    fn pass_block(
+        &mut self,
+        body: &'a [Box<Statement<'a>>],
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        body.iter()
+            .map(|s| self.pass(&s))
+            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
+        Ok(())
     }
 
     fn pass_function_declaration(
@@ -72,10 +125,10 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
                 StatementType::FunctionDeclaration { .. } => {
                     if let Some(StatementType::FunctionDeclaration { name, .. }) =
                         self.output.last().map(|s| &s.statement_type) {
-                        Box::new(Statement {
-                            location: s.location.clone(),
-                            statement_type: StatementType::UpliftFunctionVariables(name),
-                        })
+                        Box::new(self.statement_factory.new_statement(
+                            s.location.clone(),
+                            StatementType::UpliftFunctionVariables(name),
+                        ))
                     } else {
                         panic!("Last statement should be a function!")
                     }
@@ -86,15 +139,15 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         }
         self.scopes.pop();
         let missed_locals = self.missed_locals.pop().unwrap().iter().cloned().collect::<Vec<&str>>();
-        self.output.push(Statement {
-            location: statement.location.clone(),
-            statement_type: StatementType::FunctionDeclaration {
+        self.output.push(self.statement_factory.new_statement(
+            statement.location.clone(),
+            StatementType::FunctionDeclaration {
                 name: new_function_name,
                 arguments: arguments.to_vec(),
                 body: new_body,
                 context_variables: missed_locals,
             },
-        });
+        ));
         Ok(())
     }
 
@@ -133,39 +186,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         body: &'a [Statement<'a>],
         expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        let new_function_name = leak_reference(format!("@function{}", self.function_counter));
-        self.function_counter += 1;
-        let function_definition = Statement {
-            statement_type: StatementType::FunctionDeclaration {
-                name: new_function_name,
-                arguments: arguments.to_vec(),
-                body: body.iter().cloned().map(Box::new).collect(),
-                context_variables: vec![],
-            },
-            location: self.current_location.clone().unwrap(),
-        };
-        /*
-         * This is a bit of black magic. What is happening here:
-         * - We get the static, raw pointer to a leaked reference to function_definition.
-         * - We "pass" that pointer.
-         * - We then wrap it again into a Box to make sure it's properly cleaned after.
-         * Why we can't use references:
-         * - We cannot use a reference to `function-definition`, because is a scope lived and would
-         * not live for 'a.
-         * - We cannot use a reference to the last element in self.output because self does not live
-         * for 'a.
-         * - We cannot leak a Box, because we won't have any way to clean after: Since `pass` asks
-         * for the statement to live for 'a, and Box::from_raw requires a mutable reference, we won't
-         * be able to make the conversion.
-         * Why is this safe:
-         * The danger is that pass would store a reference to something inside function_definition
-         * that would later be dropped. However, this class does not do that and rather copies all
-         * values.
-         */
-        let r = Box::into_raw(Box::new(function_definition));
-        self.change_name = false;
-        self.pass(unsafe { r.as_ref() }.unwrap())?;
-        let _ = unsafe { Box::from_raw(r) };
+        let new_function_name = self.create_new_function(arguments, body)?;
         self.changes.insert(expression.id(), ExpressionType::VariableLiteral {
             identifier: new_function_name,
         });

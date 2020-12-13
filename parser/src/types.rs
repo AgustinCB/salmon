@@ -250,6 +250,29 @@ impl<'a> Expression<'a> {
 pub struct Statement<'a> {
     pub location: SourceCodeLocation<'a>,
     pub statement_type: StatementType<'a>,
+    id: usize,
+}
+
+#[derive(Clone)]
+pub struct StatementFactory {
+    counter: usize,
+}
+
+impl StatementFactory {
+    pub fn new() -> StatementFactory {
+        StatementFactory { counter: 0, }
+    }
+    pub fn new_starting(counter: usize) -> StatementFactory {
+        StatementFactory { counter }
+    }
+    pub fn new_statement<'a>(&mut self, location: SourceCodeLocation<'a>, statement_type: StatementType<'a>) -> Statement<'a> {
+        let result = Statement {
+            location, statement_type,
+            id: self.counter,
+        };
+        self.counter += 1;
+        result
+    }
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]

@@ -368,6 +368,33 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_while(
+        &mut self,
+        condition: &'a Expression<'a>,
+        action: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let current_selection = self.toggle_selection;
+        self.toggle_selection(BufferSelection::DryRun);
+        self.pass_expression(condition)?;
+        self.toggle_selection(current_selection);
+        let condition_length = self.buffer.len() + 1;
+        self.drain_buffer();
+        self.toggle_selection(BufferSelection::DryRun);
+        self.pass(action)?;
+        self.toggle_selection(current_selection);
+        let body_length = self.buffer.len() + 1;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::JmpIfFalse(body_length),
+            location: self.locations.len() - 1,
+        });
+        self.drain_buffer();
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Loop(condition_length + body_length),
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
     fn pass_checked_type(
         &mut self,
         value: &'a Expression<'a>,

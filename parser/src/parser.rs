@@ -1,4 +1,4 @@
-use crate::types::{DataKeyword, Expression, ExpressionFactory, ExpressionType, FunctionHeader, Literal, ProgramError, SourceCodeLocation, Statement, StatementType, Token, TokenType, Type};
+use crate::types::{DataKeyword, Expression, ExpressionFactory, ExpressionType, FunctionHeader, Literal, ProgramError, SourceCodeLocation, Statement, StatementType, Token, TokenType, Type, StatementFactory};
 use std::cell::RefCell;
 use std::iter::Peekable;
 
@@ -31,6 +31,7 @@ pub struct Parser<'a, I: Iterator<Item = Token<'a>>> {
     block_stack: RefCell<u8>,
     content: RefCell<Peekable<I>>,
     expression_factory: RefCell<ExpressionFactory>,
+    statement_factory: RefCell<StatementFactory>,
 }
 
 impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
@@ -39,10 +40,11 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             block_stack: RefCell::new(0),
             expression_factory: RefCell::new(ExpressionFactory::new()),
             content: RefCell::new(content),
+            statement_factory: RefCell::new(StatementFactory::new()),
         }
     }
 
-    pub fn parse(&self) -> Result<Vec<Statement<'a>>, Vec<ProgramError<'a>>> {
+    pub fn parse(&self) -> Result<(Vec<Statement<'a>>, StatementFactory), Vec<ProgramError<'a>>> {
         let mut output_vec = vec![];
         let mut error_vec = vec![];
 
@@ -54,7 +56,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }
 
         if error_vec.is_empty() {
-            Ok(output_vec)
+            Ok((output_vec, self.statement_factory.borrow().clone()))
         } else {
             Err(error_vec)
         }
@@ -73,12 +75,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 self.next();
                 let module = self.parse_identifier()?;
                 self.consume(TokenType::Semicolon, "Expected `;` at the end of statement.", &location)?;
-                Ok(Statement {
-                    location,
-                    statement_type: StatementType::Import {
-                        name: module,
-                    },
-                })
+                Ok(self.statement_factory.borrow_mut().new_statement(location, StatementType::Import {
+                    name: module,
+                }))
             }
             Some(Token {
                 location,
@@ -119,10 +118,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             Some(Token {
                 location,
                 token_type: TokenType::EOF,
-            }) => Ok(Statement {
-                location,
-                statement_type: StatementType::EOF,
-            }),
+            }) => Ok(self.statement_factory.borrow_mut().new_statement(location, StatementType::EOF)),
             Some(Token {
                 location,
                 token_type: TokenType::Mod
@@ -131,13 +127,10 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 let name = self.parse_identifier()?;
                 let block = self.parse_block_statement(location.clone())?;
                 if let StatementType::Block { body } = block.statement_type {
-                    Ok(Statement {
-                        location,
-                        statement_type: StatementType::Module {
-                            name,
-                            statements: body,
-                        }
-                    })
+                    Ok(self.statement_factory.borrow_mut().new_statement(location, StatementType::Module {
+                        name,
+                        statements: body,
+                    }))
                 } else {
                     panic!("Cannot happen")
                 }
@@ -149,10 +142,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 self.next();
                 let expression = self.parse_expression()?;
                 self.consume(TokenType::Semicolon, "Expected semicolon", &location)?;
-                Ok(Statement {
-                    location,
-                    statement_type: StatementType::PrintStatement { expression },
-                })
+                Ok(self.statement_factory.borrow_mut().new_statement(location, StatementType::PrintStatement {
+                    expression
+                }))
             }
             Some(Token {
                 location,
@@ -165,10 +157,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     &location,
                 )?;
                 if *self.block_stack.borrow() > 0 {
-                    Ok(Statement {
-                        location,
-                        statement_type: StatementType::Break,
-                    })
+                    Ok(self.statement_factory.borrow_mut().new_statement(location, StatementType::Break))
                 } else {
                     Err(ProgramError {
                         message: "Break statement can't go here".to_owned(),
@@ -190,10 +179,10 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     "Expected semicolon",
                     &expression.location,
                 )?;
-                Ok(Statement {
-                    location: expression.location.clone(),
-                    statement_type: StatementType::Expression { expression },
-                })
+                Ok(self.statement_factory.borrow_mut().new_statement(
+                    expression.location.clone(),
+                    StatementType::Expression { expression }
+                ))
             }
         }
     }
@@ -303,9 +292,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             "Expected '}' after trait body",
             location,
         )?;
-        Ok(Statement {
-            location: location.clone(),
-            statement_type: StatementType::TraitImplementation {
+        Ok(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::TraitImplementation {
                 getters: method_set.getters,
                 methods: method_set.methods,
                 setters: method_set.setters,
@@ -313,7 +302,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 trait_name,
                 class_name,
             },
-        })
+        ))
     }
 
     fn parse_trait_declaration(
@@ -350,16 +339,16 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             "Expected '}' after trait body",
             location,
         )?;
-        Ok(Statement {
-            location: location.clone(),
-            statement_type: StatementType::TraitDeclaration {
+        Ok(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::TraitDeclaration {
                 getters: method_set.getters,
                 methods: method_set.methods,
                 name,
                 setters: method_set.setters,
                 static_methods: method_set.static_methods,
             },
-        })
+        ))
     }
 
     fn parse_class_statement(
@@ -397,8 +386,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 &location,
             )?;
 
-            Ok(Statement {
-                statement_type: StatementType::ClassDeclaration {
+            Ok(self.statement_factory.borrow_mut().new_statement(
+                location,
+                StatementType::ClassDeclaration {
                     getters: method_set.getters,
                     name,
                     methods: method_set.methods,
@@ -406,8 +396,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     static_methods: method_set.static_methods,
                     superclass,
                 },
-                location,
-            })
+            ))
         } else {
             Err(ProgramError {
                 message: "Expected name in class definition".to_owned(),
@@ -489,21 +478,21 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         } else {
             self.build_if_type_chain(types_branches, match_all)
         };
-        Ok(Statement {
-            location: location.clone(),
-            statement_type: StatementType::Block {
+        Ok(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::Block {
                 body: vec![
-                    Box::new(Statement {
-                        location: location.clone(),
-                        statement_type: StatementType::VariableDeclaration {
+                    Box::new(self.statement_factory.borrow_mut().new_statement(
+                        location.clone(),
+                        StatementType::VariableDeclaration {
                             name: INTERNAL_MATCH_VALUE_NAME,
                             expression: Some(value),
                         }
-                    }),
+                    )),
                     Box::new(if_elses),
                 ]
             }
-        })
+        ))
     }
 
     fn build_if_type_chain(&self, branches: Vec<(Type<'a>, Statement<'a>)>, match_all: Statement<'a>) -> Statement<'a> {
@@ -515,9 +504,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     },
                     s.location.clone(),
                 ));
-                Statement {
-                    location: s.location.clone(),
-                    statement_type: StatementType::If {
+                self.statement_factory.borrow_mut().new_statement(
+                    s.location.clone(),
+                    StatementType::If {
                         condition: self.expression_factory.borrow_mut().new_expression(
                             ExpressionType::IsType {
                                 value,
@@ -528,7 +517,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                         then: Box::new(s),
                         otherwise: Some(Box::new(acc)),
                     }
-                }
+                )
             })
     }
 
@@ -545,9 +534,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     },
                     s.location.clone(),
                 ));
-                Statement {
-                    location: s.location.clone(),
-                    statement_type: StatementType::If {
+                self.statement_factory.borrow_mut().new_statement(
+                    s.location.clone(),
+                    StatementType::If {
                         condition: self.expression_factory.borrow_mut().new_expression(
                             ExpressionType::Binary {
                                 operator: TokenType::EqualEqual,
@@ -559,7 +548,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                         then: Box::new(s),
                         otherwise: Some(Box::new(acc)),
                     }
-                }
+                )
             })
     }
 
@@ -638,14 +627,14 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         } else {
             None
         };
-        Ok(Statement {
-            location: location.clone(),
-            statement_type: StatementType::If {
+        Ok(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::If {
                 condition,
                 then,
                 otherwise,
             },
-        })
+        ))
     }
 
     fn parse_return_statement(
@@ -655,17 +644,17 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         self.content.borrow_mut().next();
         if self.peek(TokenType::Semicolon) {
             self.consume(TokenType::Semicolon, "Expected semicolon", &location)?;
-            Ok(Statement {
+            Ok(self.statement_factory.borrow_mut().new_statement(
                 location,
-                statement_type: StatementType::Return { value: None },
-            })
+                StatementType::Return { value: None },
+            ))
         } else {
             let value = self.parse_expression()?;
             self.consume(TokenType::Semicolon, "Expected semicolon", &location)?;
-            Ok(Statement {
+            Ok(self.statement_factory.borrow_mut().new_statement(
                 location,
-                statement_type: StatementType::Return { value: Some(value) },
-            })
+                StatementType::Return { value: Some(value) },
+            ))
         }
     }
 
@@ -679,23 +668,23 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 Some(Token {
                     token_type: TokenType::Semicolon,
                     ..
-                }) => Ok(Statement {
-                    location: location.clone(),
-                    statement_type: StatementType::VariableDeclaration {
+                }) => Ok(self.statement_factory.borrow_mut().new_statement(
+                    location.clone(),
+                    StatementType::VariableDeclaration {
                         name,
                         expression: None,
                     },
-                }),
+                )),
                 Some(Token {
                     token_type: TokenType::Equal,
                     ..
                 }) => {
                     let expression = Some(self.parse_expression()?);
                     self.consume(TokenType::Semicolon, "Expected semicolon", location)?;
-                    Ok(Statement {
-                        location: location.clone(),
-                        statement_type: StatementType::VariableDeclaration { name, expression },
-                    })
+                    Ok(self.statement_factory.borrow_mut().new_statement(
+                        location.clone(),
+                        StatementType::VariableDeclaration { name, expression },
+                    ))
                 }
                 _ => Err(ProgramError {
                     location: location.clone(),
@@ -724,10 +713,10 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }
         self.consume(TokenType::RightBrace, "Expected '}' after block", &location)?;
         *self.block_stack.borrow_mut() -= 1;
-        Ok(Statement {
+        Ok(self.statement_factory.borrow_mut().new_statement(
             location,
-            statement_type: StatementType::Block { body: statements },
-        })
+            StatementType::Block { body: statements },
+        ))
     }
 
     fn parse_anonymous_function(
@@ -805,15 +794,15 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         } else {
             panic!("Can't happen")
         };
-        Ok(Statement {
-            statement_type: StatementType::FunctionDeclaration {
+        Ok(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::FunctionDeclaration {
                 context_variables: vec![],
                 name,
                 arguments,
                 body,
             },
-            location: location.clone(),
-        })
+        ))
     }
 
     fn parse_while_statement(
@@ -835,13 +824,13 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         *self.block_stack.borrow_mut() += 1;
         let body = self.parse_statement()?;
         *self.block_stack.borrow_mut() -= 1;
-        Ok(Statement {
-            location: location.clone(),
-            statement_type: StatementType::While {
+        Ok(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::While {
                 condition,
                 action: Box::new(body),
             },
-        })
+        ))
     }
 
     fn parse_for_statement(
@@ -860,9 +849,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 token_type: TokenType::Semicolon,
             }) => {
                 self.next();
-                Ok(Statement {
-                    location: location.clone(),
-                    statement_type: StatementType::Expression {
+                Ok(self.statement_factory.borrow_mut().new_statement(
+                    location.clone(),
+                    StatementType::Expression {
                         expression: self.expression_factory.borrow_mut().new_expression(
                             ExpressionType::ExpressionLiteral {
                                 value: Literal::Keyword(DataKeyword::Nil),
@@ -870,7 +859,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                             location,
                         ),
                     },
-                })
+                ))
             }
             Some(_) => self.parse_statement(),
             _ => Err(ProgramError {
@@ -925,32 +914,31 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                     location.clone(),
                 )
             };
-            Statement {
-                location: expression.location.clone(),
-                statement_type: StatementType::Expression { expression },
-            }
+            self.statement_factory.borrow_mut().new_statement(
+                expression.location.clone(),
+                StatementType::Expression { expression },
+            )
         };
         let body = self.parse_statement()?;
-        Ok(Statement {
-            location: location.clone(),
-            statement_type: StatementType::Block {
-                body: vec![
-                    Box::new(init),
-                    Box::new(Statement {
-                        location: location.clone(),
-                        statement_type: StatementType::While {
-                            condition,
-                            action: Box::new(Statement {
-                                location: location.clone(),
-                                statement_type: StatementType::Block {
-                                    body: vec![Box::new(body), Box::new(incr)],
-                                },
-                            }),
-                        },
-                    }),
-                ],
+        let action = Box::new(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::Block {
+                body: vec![Box::new(body), Box::new(incr)],
             },
-        })
+        ));
+        let body_block = Box::new(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::While {
+                condition,
+                action,
+            },
+        ));
+        Ok(self.statement_factory.borrow_mut().new_statement(
+            location.clone(),
+            StatementType::Block {
+                body: vec![ Box::new(init), body_block ],
+            },
+        ))
     }
 
     pub(crate) fn parse_expression(&self) -> Result<Expression<'a>, ProgramError<'a>> {
@@ -1525,10 +1513,7 @@ mod test {
     use super::Parser;
     use crate::types::ExpressionType::ExpressionLiteral;
     use crate::types::StatementType::VariableDeclaration;
-    use crate::types::{
-        Expression, ExpressionFactory, ExpressionType, Literal, SourceCodeLocation, Statement,
-        StatementType, Token, TokenType,
-    };
+    use crate::types::{Expression, ExpressionFactory, ExpressionType, Literal, SourceCodeLocation, Statement, StatementType, Token, TokenType, StatementFactory};
 
     fn create_expression<'a>(
         expression_type: ExpressionType<'a>,
@@ -1547,17 +1532,42 @@ mod test {
         factory.new_expression(expression_type, location)
     }
 
+    fn create_statement_with_id<'a>(
+        statement_type: StatementType<'a>,
+        location: SourceCodeLocation<'a>,
+        counter: usize,
+    ) -> Statement<'a> {
+        let mut factory = StatementFactory::new_starting(counter);
+        factory.new_statement(location, statement_type)
+    }
+
     fn create_statement_expression<'a>(
         expression_type: ExpressionType<'a>,
         location: SourceCodeLocation<'a>,
         counter: usize,
     ) -> Statement<'a> {
-        Statement {
-            location: location.clone(),
-            statement_type: StatementType::Expression {
+        let mut statement_factory = StatementFactory::new();
+        statement_factory.new_statement(
+            location.clone(),
+            StatementType::Expression {
                 expression: create_expression_with_id(expression_type, location, counter),
             },
-        }
+        )
+    }
+
+    fn create_statement_expression_with_id<'a>(
+        expression_type: ExpressionType<'a>,
+        location: SourceCodeLocation<'a>,
+        counter: usize,
+        statement_counter: usize,
+    ) -> Statement<'a> {
+        let mut statement_factory = StatementFactory::new_starting(statement_counter);
+        statement_factory.new_statement(
+            location.clone(),
+            StatementType::Expression {
+                expression: create_expression_with_id(expression_type, location, counter),
+            },
+        )
     }
 
     #[test]
@@ -2100,32 +2110,34 @@ mod test {
         ];
         let parser = Parser::new(input.into_iter().peekable());
         let result = parser.parse_statement().unwrap();
+        let mut statement_factory = StatementFactory::new();
+        let then = Box::new(statement_factory.new_statement(
+            location.clone(),
+            StatementType::Expression {
+                expression: create_expression_with_id(
+                    ExpressionType::ExpressionLiteral {
+                        value: Literal::Float(1.0),
+                    },
+                    location.clone(),
+                    1,
+                ),
+            },
+        ));
         assert_eq!(
             result,
-            Statement {
-                statement_type: StatementType::If {
+            statement_factory.new_statement(
+                location.clone(),
+                StatementType::If {
                     condition: create_expression(
                         ExpressionType::ExpressionLiteral {
                             value: Literal::Float(1.0),
                         },
                         location.clone(),
                     ),
-                    then: Box::new(Statement {
-                        location: location.clone(),
-                        statement_type: StatementType::Expression {
-                            expression: create_expression_with_id(
-                                ExpressionType::ExpressionLiteral {
-                                    value: Literal::Float(1.0),
-                                },
-                                location.clone(),
-                                1,
-                            ),
-                        },
-                    }),
                     otherwise: None,
+                    then,
                 },
-                location: location.clone(),
-            }
+            )
         );
         assert!(parser.is_empty());
     }
@@ -2184,8 +2196,8 @@ mod test {
         let result = parser.parse_statement().unwrap();
         assert_eq!(
             result,
-            Statement {
-                statement_type: StatementType::If {
+            create_statement_with_id(
+                StatementType::If {
                     condition: create_expression(
                         ExpressionType::ExpressionLiteral {
                             value: Literal::Float(1.0),
@@ -2199,16 +2211,18 @@ mod test {
                         location.clone(),
                         1
                     )),
-                    otherwise: Some(Box::new(create_statement_expression(
+                    otherwise: Some(Box::new(create_statement_expression_with_id(
                         ExpressionType::ExpressionLiteral {
                             value: Literal::Float(1.0)
                         },
                         location.clone(),
-                        2
+                        2,
+                        1,
                     ))),
                 },
-                location: location.clone(),
-            }
+                location.clone(),
+                2
+            )
         );
         assert!(parser.is_empty());
     }
@@ -2237,16 +2251,11 @@ mod test {
         ];
         let parser = Parser::new(input.into_iter().peekable());
         let result = parser.parse_statement().unwrap();
-        assert_eq!(
-            result,
-            Statement {
-                statement_type: StatementType::VariableDeclaration {
-                    name: "identifier",
-                    expression: None,
-                },
-                location: location.clone(),
-            }
-        );
+        assert_eq!(result.location, location);
+        assert_eq!(result.statement_type, StatementType::VariableDeclaration {
+            name: "identifier",
+            expression: None,
+        });
         assert!(parser.is_empty());
     }
 
@@ -2284,21 +2293,16 @@ mod test {
         ];
         let parser = Parser::new(input.into_iter().peekable());
         let result = parser.parse_statement().unwrap();
-        assert_eq!(
-            result,
-            Statement {
-                statement_type: StatementType::VariableDeclaration {
-                    name: "identifier",
-                    expression: Some(create_expression(
-                        ExpressionType::ExpressionLiteral {
-                            value: Literal::Float(1.0),
-                        },
-                        location.clone(),
-                    )),
+        assert_eq!(result.location, location);
+        assert_eq!(result.statement_type, StatementType::VariableDeclaration {
+            name: "identifier",
+            expression: Some(create_expression(
+                ExpressionType::ExpressionLiteral {
+                    value: Literal::Float(1.0),
                 },
-                location: location.clone(),
-            }
-        );
+                location.clone(),
+            )),
+        });
         assert!(parser.is_empty());
     }
 
@@ -2340,39 +2344,27 @@ mod test {
         ];
         let parser = Parser::new(input.into_iter().peekable());
         let result = parser.parse_statement().unwrap();
-        assert_eq!(
-            result,
-            Statement {
-                statement_type: StatementType::Block {
-                    body: vec![
-                        Box::new(Statement {
-                            location: location.clone(),
-                            statement_type: StatementType::Expression {
-                                expression: create_expression(
-                                    ExpressionType::VariableLiteral {
-                                        identifier: "identifier",
-                                    },
-                                    location.clone(),
-                                ),
-                            }
-                        }),
-                        Box::new(Statement {
-                            location: location.clone(),
-                            statement_type: StatementType::Expression {
-                                expression: create_expression_with_id(
-                                    ExpressionType::ExpressionLiteral {
-                                        value: Literal::Float(1.0),
-                                    },
-                                    location.clone(),
-                                    1,
-                                ),
-                            }
-                        }),
-                    ]
-                },
-                location: location.clone(),
-            }
-        );
+        assert_eq!(result.location, location);
+        assert_eq!(result.statement_type, StatementType::Block {
+            body: vec![
+                Box::new(create_statement_expression_with_id(
+                    ExpressionType::VariableLiteral {
+                        identifier: "identifier",
+                    },
+                    location.clone(),
+                    0,
+                    0,
+                )),
+                Box::new(create_statement_expression_with_id(
+                    ExpressionType::ExpressionLiteral {
+                        value: Literal::Float(1.0),
+                    },
+                    location.clone(),
+                    1,
+                    1,
+                )),
+            ]
+        });
         assert!(parser.is_empty());
     }
 
@@ -2440,39 +2432,33 @@ mod test {
         let result = parser.parse_statement().unwrap();
         assert_eq!(
             result,
-            Statement {
-                statement_type: StatementType::FunctionDeclaration {
+            create_statement_with_id(
+                StatementType::FunctionDeclaration {
                     name: "identifier",
                     arguments: vec!["argument"],
                     body: vec![
-                        Box::new(Statement {
-                            location: location.clone(),
-                            statement_type: StatementType::Expression {
-                                expression: create_expression(
-                                    ExpressionType::VariableLiteral {
-                                        identifier: "identifier",
-                                    },
-                                    location.clone(),
-                                ),
-                            }
-                        }),
-                        Box::new(Statement {
-                            location: location.clone(),
-                            statement_type: StatementType::Expression {
-                                expression: create_expression_with_id(
-                                    ExpressionType::ExpressionLiteral {
-                                        value: Literal::Float(1.0),
-                                    },
-                                    location.clone(),
-                                    1,
-                                ),
-                            }
-                        }),
+                        Box::new(create_statement_expression_with_id(
+                            ExpressionType::VariableLiteral {
+                                identifier: "identifier",
+                            },
+                            location.clone(),
+                            0,
+                            0,
+                        )),
+                        Box::new(create_statement_expression_with_id(
+                            ExpressionType::ExpressionLiteral {
+                                value: Literal::Float(1.0),
+                            },
+                            location.clone(),
+                            1,
+                            1,
+                        )),
                     ],
                     context_variables: vec![],
                 },
-                location: location.clone(),
-            }
+                location.clone(),
+                3,
+            )
         );
         assert!(parser.is_empty());
     }
@@ -2535,48 +2521,42 @@ mod test {
         let result = parser.parse_statement().unwrap();
         assert_eq!(
             result,
-            Statement {
-                statement_type: StatementType::While {
+            create_statement_with_id(
+                StatementType::While {
                     condition: create_expression(
                         ExpressionType::VariableLiteral {
                             identifier: "argument",
                         },
                         location.clone(),
                     ),
-                    action: Box::new(Statement {
-                        location: location.clone(),
-                        statement_type: StatementType::Block {
+                    action: Box::new(create_statement_with_id(
+                        StatementType::Block {
                             body: vec![
-                                Box::new(Statement {
-                                    location: location.clone(),
-                                    statement_type: StatementType::Expression {
-                                        expression: create_expression_with_id(
-                                            ExpressionType::VariableLiteral {
-                                                identifier: "identifier",
-                                            },
-                                            location.clone(),
-                                            1,
-                                        ),
-                                    }
-                                }),
-                                Box::new(Statement {
-                                    location: location.clone(),
-                                    statement_type: StatementType::Expression {
-                                        expression: create_expression_with_id(
-                                            ExpressionType::ExpressionLiteral {
-                                                value: Literal::Float(1.0),
-                                            },
-                                            location.clone(),
-                                            2,
-                                        ),
-                                    }
-                                }),
+                                Box::new(create_statement_expression_with_id(
+                                    ExpressionType::VariableLiteral {
+                                        identifier: "identifier",
+                                    },
+                                    location.clone(),
+                                    1,
+                                    0,
+                                )),
+                                Box::new(create_statement_expression_with_id(
+                                    ExpressionType::ExpressionLiteral {
+                                        value: Literal::Float(1.0),
+                                    },
+                                    location.clone(),
+                                    2,
+                                    1,
+                                )),
                             ],
-                        }
-                    })
+                        },
+                        location.clone(),
+                        2,
+                    ))
                 },
-                location: location.clone(),
-            }
+                location.clone(),
+                3,
+            )
         );
         assert!(parser.is_empty());
     }
@@ -2661,53 +2641,44 @@ mod test {
         ];
         let parser = Parser::new(input.into_iter().peekable());
         let result = parser.parse_statement().unwrap();
-        let body_statement = Statement {
-            location: location.clone(),
-            statement_type: StatementType::Block {
+        let body_statement = create_statement_with_id(
+            StatementType::Block {
                 body: vec![
-                    Box::new(Statement {
-                        location: location.clone(),
-                        statement_type: StatementType::Expression {
-                            expression: create_expression_with_id(
-                                ExpressionType::VariableLiteral {
-                                    identifier: "identifier",
-                                },
-                                location.clone(),
-                                2,
-                            ),
+                    Box::new(create_statement_expression_with_id(
+                        ExpressionType::VariableLiteral {
+                            identifier: "identifier",
                         },
-                    }),
-                    Box::new(Statement {
-                        location: location.clone(),
-                        statement_type: StatementType::Expression {
-                            expression: create_expression_with_id(
-                                ExpressionType::ExpressionLiteral {
-                                    value: Literal::Float(1.0),
-                                },
-                                location.clone(),
-                                3,
-                            ),
+                        location.clone(),
+                        2,
+                        2,
+                    )),
+                    Box::new(create_statement_expression_with_id(
+                        ExpressionType::ExpressionLiteral {
+                            value: Literal::Float(1.0),
                         },
-                    }),
+                        location.clone(),
+                        3,
+                        3,
+                    )),
                 ],
             },
-        };
-        let while_statement = Statement {
-            statement_type: StatementType::While {
+            location.clone(),
+            4,
+        );
+        let while_statement = create_statement_with_id(
+            StatementType::While {
                 condition: create_expression(
                     ExpressionType::VariableLiteral {
                         identifier: "argument",
                     },
                     location.clone(),
                 ),
-                action: Box::new(Statement {
-                    location: location.clone(),
-                    statement_type: StatementType::Block {
+                action: Box::new(create_statement_with_id(
+                    StatementType::Block {
                         body: vec![
                             Box::new(body_statement),
-                            Box::new(Statement {
-                                location: location.clone(),
-                                statement_type: StatementType::Expression {
+                            Box::new(create_statement_with_id(
+                                StatementType::Expression {
                                     expression: create_expression_with_id(
                                         ExpressionType::VariableLiteral {
                                             identifier: "argument",
@@ -2716,28 +2687,35 @@ mod test {
                                         1,
                                     ),
                                 },
-                            }),
+                                location.clone(),
+                                1
+                            )),
                         ],
                     },
-                }),
+                    location.clone(),
+                    5,
+                )),
             },
-            location: location.clone(),
-        };
-        let for_block = Statement {
-            location: location.clone(),
-            statement_type: StatementType::Block {
+            location.clone(),
+            6,
+        );
+        let for_block = create_statement_with_id(
+            StatementType::Block {
                 body: vec![
-                    Box::new(Statement {
-                        location: location.clone(),
-                        statement_type: VariableDeclaration {
+                    Box::new(create_statement_with_id(
+                        VariableDeclaration {
                             expression: None,
                             name: "identifier",
                         },
-                    }),
+                        location.clone(),
+                        0
+                    )),
                     Box::new(while_statement),
                 ],
             },
-        };
+            location.clone(),
+            7,
+        );
         assert_eq!(result, for_block);
         assert!(parser.is_empty());
     }
