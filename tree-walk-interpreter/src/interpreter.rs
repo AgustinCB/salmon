@@ -591,6 +591,7 @@ impl<'a> Interpreter<'a> {
             StatementType::Break if self.state.borrow().loop_count > 0 => {
                 self.state.borrow_mut().broke_loop = true;
             }
+            StatementType::UpliftFunctionVariables(_) => return Ok(Value::Nil),
             StatementType::Break =>
                 return Err(statement.create_program_error("Break outside loop")),
         };
@@ -653,7 +654,7 @@ impl<'a> Interpreter<'a> {
         lexer.parse()
             .and_then(|tt| {
                 let parser = Parser::new(tt.into_iter().peekable());
-                parser.parse().map(|t| t)
+                parser.parse().map(|t| t.0)
             })
             .map_err(|ee| ee[0].clone())
     }

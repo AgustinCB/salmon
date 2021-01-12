@@ -1,4 +1,4 @@
-use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression, StatementFactory};
+use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression, StatementFactory, ExpressionFactory};
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 
 fn leak_reference<'a, T>(s: T) -> &'a T {
@@ -9,16 +9,22 @@ pub struct LambdaLifting<'a> {
     change_name: bool,
     changes: HashMap<usize, ExpressionType<'a>>,
     current_location: Option<SourceCodeLocation<'a>>,
+    expression_factory: ExpressionFactory,
     function_counter: usize,
     locals: HashMap<usize, usize>,
     missed_locals: Vec<HashSet<&'a str>>,
     output: Vec<Statement<'a>>,
     scopes: Vec<HashMap<&'a str, &'a str>>,
     statement_factory: StatementFactory,
+    statement_changes: HashMap<usize, StatementType<'a>>,
 }
 
 impl<'a> LambdaLifting<'a> {
-    pub fn new(locals: HashMap<usize, usize>, statement_factory: StatementFactory) -> LambdaLifting<'a> {
+    pub fn new(
+        locals: HashMap<usize, usize>,
+        statement_factory: StatementFactory,
+        expression_factory: ExpressionFactory,
+    ) -> LambdaLifting<'a> {
         LambdaLifting {
             change_name: true,
             changes: HashMap::default(),
@@ -27,6 +33,8 @@ impl<'a> LambdaLifting<'a> {
             missed_locals: Vec::default(),
             output: Vec::default(),
             scopes: vec![HashMap::default()],
+            statement_changes: HashMap::default(),
+            expression_factory,
             locals,
             statement_factory,
         }
@@ -34,8 +42,8 @@ impl<'a> LambdaLifting<'a> {
 
     fn create_new_function(
         &mut self,
-        arguments: &'a [&'a str],
-        body: &'a [Statement<'a>],
+        arguments: Option<&'a [&'a str]>,
+        body: Vec<Box<Statement<'a>>>,
     ) -> Result<&'static str, Vec<ProgramError<'a>>> {
         let new_function_name = leak_reference(format!("@function{}", self.function_counter));
         self.function_counter += 1;
@@ -43,9 +51,9 @@ impl<'a> LambdaLifting<'a> {
             self.current_location.clone().unwrap(),
             StatementType::FunctionDeclaration {
                 name: new_function_name,
-                arguments: arguments.to_vec(),
-                body: body.iter().cloned().map(Box::new).collect(),
+                arguments: arguments.map(|a| a.to_vec()).unwrap_or(vec![]),
                 context_variables: vec![],
+                body,
             },
         );
         /*
@@ -74,7 +82,7 @@ impl<'a> LambdaLifting<'a> {
     }
 }
 
-type LambdaLiftingResult<'a> = (Vec<Statement<'a>>, HashMap<usize, ExpressionType<'a>>);
+type LambdaLiftingResult<'a> = (Vec<Statement<'a>>, HashMap<usize, ExpressionType<'a>>, HashMap<usize, StatementType<'a>>);
 
 impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<LambdaLiftingResult<'a>, Vec<ProgramError<'a>>> {
@@ -85,16 +93,30 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
             }
             self.pass(s)?;
         }
-        Ok((self.output.clone(), self.changes.clone()))
+        Ok((self.output.clone(), self.changes.clone(), self.statement_changes.clone()))
     }
 
     fn pass_block(
         &mut self,
         body: &'a [Box<Statement<'a>>],
+        statement_id: usize,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        body.iter()
-            .map(|s| self.pass(&s))
-            .collect::<Result<Vec<()>, Vec<ProgramError>>>()?;
+        let new_function_name = self.create_new_function(None, body.to_vec())?;
+        let callee = Box::new(self.expression_factory.new_expression(
+            ExpressionType::VariableLiteral {
+                identifier: new_function_name,
+            },
+            self.current_location.clone().unwrap(),
+        ));
+        self.statement_changes.insert(statement_id, StatementType::Expression {
+            expression: self.expression_factory.new_expression(
+                ExpressionType::Call {
+                    arguments: vec![],
+                    callee,
+                },
+                self.current_location.clone().unwrap(),
+            ),
+        });
         Ok(())
     }
 
@@ -186,7 +208,10 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         body: &'a [Statement<'a>],
         expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        let new_function_name = self.create_new_function(arguments, body)?;
+        let new_function_name = self.create_new_function(
+            Some(arguments),
+            body.iter().cloned().map(Box::new).collect()
+        )?;
         self.changes.insert(expression.id(), ExpressionType::VariableLiteral {
             identifier: new_function_name,
         });

@@ -1,14 +1,16 @@
 use ahash::{AHashMap as HashMap};
-use parser::types::{ExpressionType, MutPass, ProgramError, Statement, Expression};
+use parser::types::{ExpressionType, MutPass, ProgramError, Statement, StatementType, Expression};
 
 pub struct Changes<'a> {
-    changes: HashMap<usize, ExpressionType<'a>>
+    changes: HashMap<usize, ExpressionType<'a>>,
+    statement_changes: HashMap<usize, StatementType<'a>>,
 }
 
 impl<'a> Changes<'a> {
-    pub(crate) fn new(changes: HashMap<usize, ExpressionType<'a>>) -> Changes<'a> {
+    pub(crate) fn new(changes: HashMap<usize, ExpressionType<'a>>, statement_changes: HashMap<usize, StatementType<'a>>) -> Changes<'a> {
         Changes {
             changes,
+            statement_changes,
         }
     }
 }
@@ -19,6 +21,59 @@ impl<'a> MutPass<'a, ()> for Changes<'a> {
         for s in ss.iter_mut() {
             self.pass(s)?;
         }
+        Ok(())
+    }
+
+    fn pass(&mut self, statement: &'a mut Statement<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        if let Some(new_statement_type) = self.statement_changes.remove(&statement.id()) {
+            statement.statement_type = new_statement_type;
+        }
+        match &mut statement.statement_type {
+            StatementType::Module { name, statements } =>
+                self.pass_module(name, statements)?,
+            StatementType::Import { name } => self.pass_import(name)?,
+            StatementType::Block { body } => self.pass_block(body)?,
+            StatementType::VariableDeclaration { expression, name } =>
+                self.pass_variable_declaration(name, expression)?,
+            StatementType::ClassDeclaration {
+                name,
+                methods,
+                static_methods,
+                setters,
+                getters,
+                superclass,
+            } => self.pass_class_declaration(name, methods, static_methods, setters, getters, superclass)?,
+            StatementType::TraitDeclaration { name, .. } =>
+                self.pass_trait_declaration(name)?,
+            StatementType::TraitImplementation {
+                class_name,
+                trait_name,
+                methods,
+                static_methods,
+                setters,
+                getters,
+                ..
+            } => self.pass_trait_implementation(class_name, trait_name, methods, static_methods, setters, getters)?,
+            StatementType::FunctionDeclaration {
+                name,
+                arguments,
+                body,
+                ..
+            } => self.pass_function_declaration(name, arguments, body)?,
+            StatementType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
+            StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
+            StatementType::If {
+                condition,
+                then,
+                otherwise,
+            } => self.pass_if(condition, then, otherwise)?,
+            StatementType::PrintStatement { expression } => self.pass_print(expression)?,
+            StatementType::Return { value } => self.pass_return(value)?,
+            StatementType::While { condition, action } =>
+                self.pass_while(condition, action)?,
+            StatementType::Break => {}
+            StatementType::EOF => {}
+        };
         Ok(())
     }
 

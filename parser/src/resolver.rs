@@ -157,6 +157,19 @@ impl<'a> Resolver<'a> {
 impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<HashMap<usize, usize>, Vec<ProgramError<'a>>> {
         ss.iter()
+            .filter(|s| s.is_variable_declaration())
+            .map(|s| {
+                if let StatementType::VariableDeclaration { name, expression } = &s.statement_type {
+                    self.declare(name, &s.location)
+                        .map_err(|e| vec![e])?;
+                    if expression.is_some() {
+                        self.define(name);
+                    }
+                }
+                Ok(())
+            })
+            .collect::<Result<Vec<()>, Vec<ProgramError<'a>>>>()?;
+        ss.iter()
             .map(|s| self.pass(&s))
             .collect::<Result<Vec<()>, Vec<ProgramError<'a>>>>()?;
         Ok(self.locals.clone())
@@ -190,7 +203,7 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
         Ok(())
     }
 
-    fn pass_block(&mut self, body: &'a [Box<Statement<'a>>]) -> Result<(), Vec<ProgramError<'a>>> {
+    fn pass_block(&mut self, body: &'a [Box<Statement<'a>>], _statement_id: usize) -> Result<(), Vec<ProgramError<'a>>> {
         self.push_scope(HashMap::default());
         body.iter()
             .map(|s| self.pass(&s))
@@ -204,11 +217,15 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
         expression: &'a Option<Expression<'a>>,
         statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        self.declare(name, &statement.location)
-            .map_err(|e| vec![e])?;
+        if self.scopes.len() != 1 {
+            self.declare(name, &statement.location)
+                .map_err(|e| vec![e])?;
+        }
         if let Some(e) = expression {
             self.pass_expression(e)?;
-            self.define(name);
+            if self.scopes.len() != 1 {
+                self.define(name);
+            }
         }
         Ok(())
     }

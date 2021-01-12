@@ -54,7 +54,7 @@ fn main() -> io::Result<()> {
             let parser = Parser::new(ts.into_iter().peekable());
             parser.parse()
         });
-    let ss = match result {
+    let (ss, _, _) = match result {
         Ok(ss) => ss,
         Err(es) => {
             es.iter().for_each(|e| eprintln!("{}", e));

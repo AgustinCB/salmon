@@ -44,7 +44,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }
     }
 
-    pub fn parse(&self) -> Result<(Vec<Statement<'a>>, StatementFactory), Vec<ProgramError<'a>>> {
+    pub fn parse(&self) -> Result<(Vec<Statement<'a>>, StatementFactory, ExpressionFactory), Vec<ProgramError<'a>>> {
         let mut output_vec = vec![];
         let mut error_vec = vec![];
 
@@ -56,7 +56,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         }
 
         if error_vec.is_empty() {
-            Ok((output_vec, self.statement_factory.borrow().clone()))
+            Ok((output_vec, self.statement_factory.borrow().clone(), self.expression_factory.borrow().clone()))
         } else {
             Err(error_vec)
         }

@@ -156,11 +156,11 @@ fn main() {
             let parser = Parser::new(ts.into_iter().peekable());
             parser.parse()
         });
-    let (ss, statement_factory) = handle_result(result);
+    let (ss, statement_factory, expression_factory) = handle_result(result);
     let locals = handle_result(Resolver::new().run(&ss));
-    let (mut ss, changes) = handle_result(LambdaLifting::new(locals.clone(), statement_factory).run(&ss));
+    let (mut ss, changes, statement_changes) = handle_result(LambdaLifting::new(locals.clone(), statement_factory, expression_factory).run(&ss));
     let ss_ref: *mut Vec<Statement<'_>> = &mut ss as *mut _;
-    handle_result(changes::Changes::new(changes).run(unsafe { ss_ref.as_mut() }.unwrap()));
+    handle_result(changes::Changes::new(changes, statement_changes).run(unsafe { ss_ref.as_mut() }.unwrap()));
     let ss = rearrenge_function_declarations(ss);
     let locals = handle_result(Resolver::new_without_check_used().run(&ss));
     let mut c = compiler::Compiler::new(locals);

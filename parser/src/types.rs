@@ -253,6 +253,12 @@ pub struct Statement<'a> {
     id: usize,
 }
 
+impl<'a> Statement<'a> {
+    pub fn id(&self) -> usize {
+        self.id
+    }
+}
+
 #[derive(Clone)]
 pub struct StatementFactory {
     counter: usize,
@@ -357,6 +363,13 @@ impl<'a> Statement<'a> {
         }
     }
 
+    pub fn is_variable_declaration(&self) -> bool {
+        match self.statement_type {
+            StatementType::VariableDeclaration {..} => true,
+            _ => false,
+        }
+    }
+
     pub fn is_function_declaration(&self) -> bool {
         match self.statement_type {
             StatementType::FunctionDeclaration {..} => true,
@@ -368,7 +381,10 @@ impl<'a> Statement<'a> {
 pub trait MutPass<'a, R> {
     fn run(&mut self, ss: &'a mut [Statement<'a>]) -> Result<R, Vec<ProgramError<'a>>>;
 
+    fn before_pass(&mut self, _s: &Statement<'a>) {}
+
     fn pass(&mut self, statement: &'a mut Statement<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.before_pass(statement);
         match &mut statement.statement_type {
             StatementType::Module { name, statements } =>
                 self.pass_module(name, statements)?,
@@ -747,12 +763,15 @@ pub trait MutPass<'a, R> {
 pub trait Pass<'a, R> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<R, Vec<ProgramError<'a>>>;
 
+    fn before_pass(&mut self, _s: &Statement<'a>) {}
+
     fn pass(&mut self, statement: &'a Statement<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        self.before_pass(statement);
         match &statement.statement_type {
             StatementType::Module { name, statements } =>
                 self.pass_module(name, statements, statement)?,
             StatementType::Import { name } => self.pass_import(name, statement)?,
-            StatementType::Block { body } => self.pass_block(body)?,
+            StatementType::Block { body } => self.pass_block(body, statement.id)?,
             StatementType::VariableDeclaration { expression, name } =>
                 self.pass_variable_declaration(name, expression, statement)?,
             StatementType::ClassDeclaration {
@@ -880,6 +899,7 @@ pub trait Pass<'a, R> {
     fn pass_block(
         &mut self,
         body: &'a [Box<Statement<'a>>],
+        _statement_id: usize,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         body.iter()
             .map(|s| self.pass(&s))

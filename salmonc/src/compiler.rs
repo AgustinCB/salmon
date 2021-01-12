@@ -1,5 +1,5 @@
 use ahash::{AHashMap as HashMap};
-use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type};
+use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type, StatementType};
 use smoked::instruction::{Instruction, InstructionType};
 
 #[derive(Debug, PartialEq)]
@@ -118,10 +118,7 @@ impl<'a> Compiler<'a> {
         if prev_functions_size != self.function_instructions.len() &&
             self.function_instructions.last().map(|i| i.instruction_type != InstructionType::Return)
                 .unwrap_or(true) {
-            self.add_instruction(Instruction {
-                instruction_type: InstructionType::Return,
-                location: self.locations.len() -1,
-            });
+            self.pass_return(&None)?;
         }
         self.scopes.pop();
         self.toggle_selection(previous);
@@ -146,10 +143,12 @@ impl<'a> Compiler<'a> {
 impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<Vec<Instruction>, Vec<ProgramError<'a>>> {
         for s in ss {
-            if self.last_location.clone().map(|l| l != s.location).unwrap_or(true) {
-                self.last_location = Some(s.location.clone());
-                self.locations.push(s.location.clone());
+            if let StatementType::VariableDeclaration { name, .. } = s.statement_type {
+                let var_id = self.scopes[0].len();
+                self.scopes[0].insert(name, var_id);
             }
+        }
+        for s in ss {
             self.pass(s)?;
         }
         self.add_instruction(Instruction {
@@ -164,6 +163,13 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         }
         instructions.extend_from_slice(&self.function_instructions);
         Ok(instructions)
+    }
+
+    fn before_pass(&mut self, s: &Statement<'a>) {
+        if !self.locations.contains(&s.location) {
+            self.last_location = Some(s.location.clone());
+            self.locations.push(s.location.clone());
+        }
     }
 
     fn pass_expression_statement(
@@ -191,6 +197,16 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         &mut self,
         name: &'a str,
     ) -> Result<(), Vec<ProgramError<'a>>> {
+        let global = match self.scopes[0].iter().filter_map(|(fname, value)| {
+            if *fname == name {
+                Some(value)
+            } else {
+                None
+            }
+        }).next() {
+            Some(i) => *i,
+            None => return Ok(()),
+        };
         let constant = match self.constants.iter().position(|i| {
             return if let ConstantValues::Function { name: fname, context_variables, .. } = i {
                 *fname == name && context_variables.len() > 0
@@ -239,7 +255,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             location: self.locations.len() - 1,
         });
         self.add_instruction(Instruction {
-            instruction_type: InstructionType::AttachArray(constant),
+            instruction_type: InstructionType::AttachArray(global),
             location: self.locations.len() - 1,
         });
         Ok(())
@@ -252,8 +268,14 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         _statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         let scope_id = self.scopes.len() - 1;
-        let var_id = self.scopes[scope_id].len();
-        self.scopes[scope_id].insert(identifier, var_id);
+        let var_id = if scope_id > 0 {
+            self.scopes[scope_id].len()
+        } else {
+            self.scopes[scope_id][identifier]
+        };
+        if scope_id > 0 {
+            self.scopes[scope_id].insert(identifier, var_id);
+        }
         if let Some(e) = expression {
             self.pass_expression(e)?;
         } else {
@@ -360,6 +382,12 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     fn pass_return(&mut self, expression: &'a Option<Expression<'a>>) -> Result<(), Vec<ProgramError<'a>>> {
         if let Some(e) = expression {
             self.pass_expression(e)?;
+        } else {
+            let constant = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(constant),
+                location: self.locations.len() - 1,
+            })
         };
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Return,
