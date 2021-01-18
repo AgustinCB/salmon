@@ -569,6 +569,16 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
                 instruction_type: InstructionType::Or,
                 location: self.locations.len() - 1,
             }),
+            TokenType::Bar => {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Swap,
+                    location: self.locations.len() - 1,
+                });
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Pop,
+                    location: self.locations.len() - 1,
+                });
+            },
             t => Err(vec![ProgramError {
                 message: format!("Invalid operator {:?}", t),
                 location: self.locations.last().unwrap().clone(),

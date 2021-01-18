@@ -4,7 +4,7 @@ use failure::Error;
 use parser::lexer::Lexer;
 use parser::parser::Parser;
 use parser::resolver::Resolver;
-use parser::types::{MutPass, Pass, ProgramError, Literal, DataKeyword, SourceCodeLocation, Statement};
+use parser::types::{MutPass, Pass, ProgramError, Literal, DataKeyword, SourceCodeLocation, Statement, DebugStatements};
 use std::env;
 use std::env::Args;
 use std::io::{Read, Write};
@@ -162,6 +162,7 @@ fn main() {
     let ss_ref: *mut Vec<Statement<'_>> = &mut ss as *mut _;
     handle_result(changes::Changes::new(changes, statement_changes).run(unsafe { ss_ref.as_mut() }.unwrap()));
     let ss = rearrenge_function_declarations(ss);
+    //eprintln!("{:?}", DebugStatements(&ss));
     let locals = handle_result(Resolver::new_without_check_used().run(&ss));
     let mut c = compiler::Compiler::new(locals);
     let instructions = handle_result(c.run(&ss));

@@ -79,6 +79,7 @@ pub enum TokenType<'a> {
     Array,
     Module,
     Mod,
+    Bar,
     Identifier { name: &'a str },
     TokenLiteral { value: Literal<'a> },
 }
@@ -375,6 +376,17 @@ impl<'a> Statement<'a> {
             StatementType::FunctionDeclaration {..} => true,
             _ => false,
         }
+    }
+}
+
+pub struct DebugStatements<'a>(pub &'a [Statement<'a>]);
+impl<'a> Debug for DebugStatements<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[\n")?;
+        for s in self.0 {
+            f.write_str(&format!("\t{:?}\n", s))?;
+        }
+        f.write_str("]\n")
     }
 }
 

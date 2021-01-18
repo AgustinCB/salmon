@@ -1008,7 +1008,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
     }
 
     fn parse_ternary(&self) -> Result<Expression<'a>, ProgramError<'a>> {
-        let condition = self.parse_or()?;
+        let condition = self.parse_sequence()?;
         if self.peek(TokenType::Question) {
             self.next();
             let then_branch = self.parse_expression()?;
@@ -1030,6 +1030,10 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         } else {
             Ok(condition)
         }
+    }
+
+    fn parse_sequence(&self) -> Result<Expression<'a>, ProgramError<'a>> {
+        self.parse_binary(Parser::parse_or, Parser::parse_sequence, &[TokenType::Bar])
     }
 
     fn parse_or(&self) -> Result<Expression<'a>, ProgramError<'a>> {

@@ -75,6 +75,7 @@ impl<'a> Lexer<'a> {
                     Some(self.create_token(TokenType::LessEqual))
                 }
                 ('<', _) => Some(self.create_token(TokenType::Less)),
+                ('|', _) => Some(self.create_token(TokenType::Bar)),
                 ('\"', _) => {
                     let init = self.current + 1;
                     self.take_while(|s| s != '\"');
