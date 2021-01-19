@@ -60,7 +60,6 @@ impl<'a> MutPass<'a, ()> for Changes<'a> {
                 body,
                 ..
             } => self.pass_function_declaration(name, arguments, body)?,
-            StatementType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
             StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
             StatementType::If {
                 condition,
@@ -83,6 +82,7 @@ impl<'a> MutPass<'a, ()> for Changes<'a> {
             expression.expression_type = new_expression_type;
         }
         match &mut expression.expression_type {
+            ExpressionType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
             ExpressionType::IsType { value, checked_type } =>
                 self.pass_checked_type(value, checked_type)?,
             ExpressionType::ModuleLiteral {

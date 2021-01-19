@@ -149,7 +149,12 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
                         self.output.last().map(|s| &s.statement_type) {
                         Box::new(self.statement_factory.new_statement(
                             s.location.clone(),
-                            StatementType::UpliftFunctionVariables(name),
+                            StatementType::Expression {
+                                expression: self.expression_factory.new_expression(
+                                    ExpressionType::UpliftFunctionVariables(name),
+                                    s.location.clone(),
+                                )
+                            },
                         ))
                     } else {
                         panic!("Last statement should be a function!")

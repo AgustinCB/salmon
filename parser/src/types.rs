@@ -236,6 +236,7 @@ pub enum ExpressionType<'a> {
         value: Box<Expression<'a>>,
         checked_type: Type<'a>,
     },
+    UpliftFunctionVariables(&'a str),
 }
 
 impl<'a> Expression<'a> {
@@ -333,7 +334,6 @@ pub enum StatementType<'a> {
         body: Vec<Box<Statement<'a>>>,
         context_variables: Vec<&'a str>,
     },
-    UpliftFunctionVariables(&'a str),
     Block {
         body: Vec<Box<Statement<'a>>>,
     },
@@ -429,7 +429,6 @@ pub trait MutPass<'a, R> {
                 body,
                 ..
             } => self.pass_function_declaration(name, arguments, body)?,
-            StatementType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
             StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
             StatementType::If {
                 condition,
@@ -449,6 +448,7 @@ pub trait MutPass<'a, R> {
     fn pass_expression(&mut self, expression: &'a mut Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         let expression_id = expression.id();
         match &mut expression.expression_type {
+            ExpressionType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
             ExpressionType::IsType { value, checked_type } =>
                 self.pass_checked_type(value, checked_type)?,
             ExpressionType::ModuleLiteral {
@@ -811,7 +811,6 @@ pub trait Pass<'a, R> {
                 body,
                 context_variables,
             } => self.pass_function_declaration(name, arguments, body, statement, context_variables)?,
-            StatementType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
             StatementType::Expression { expression } => self.pass_expression_statement(expression)?,
             StatementType::If {
                 condition,
@@ -830,6 +829,7 @@ pub trait Pass<'a, R> {
 
     fn pass_expression(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         match &expression.expression_type {
+            ExpressionType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
             ExpressionType::IsType { value, checked_type } =>
                 self.pass_checked_type(value, checked_type)?,
             ExpressionType::ModuleLiteral {

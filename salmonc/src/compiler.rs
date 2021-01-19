@@ -258,6 +258,11 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             instruction_type: InstructionType::AttachArray(global),
             location: self.locations.len() - 1,
         });
+        let constant = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(constant),
+            location: self.locations.len() - 1,
+        });
         Ok(())
     }
 
