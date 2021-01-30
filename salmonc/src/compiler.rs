@@ -84,7 +84,12 @@ impl<'a> Compiler<'a> {
     }
 
     fn drain_buffer(&mut self) {
-        self.instructions.extend_from_slice(&self.buffer);
+        let buffer = match self.toggle_selection {
+            BufferSelection::DryRun => panic!("WHAT YOU DOING"),
+            BufferSelection::Function => &mut self.function_instructions,
+            BufferSelection::Rom => &mut self.instructions,
+        };
+        buffer.extend_from_slice(&self.buffer);
         self.buffer.clear();
     }
 
@@ -197,6 +202,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         &mut self,
         name: &'a str,
     ) -> Result<(), Vec<ProgramError<'a>>> {
+        let nil_constant = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
         let global = match self.scopes[0].iter().filter_map(|(fname, value)| {
             if *fname == name {
                 Some(value)
@@ -205,7 +211,13 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             }
         }).next() {
             Some(i) => *i,
-            None => return Ok(()),
+            None => {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Constant(nil_constant),
+                    location: self.locations.len() - 1,
+                });
+                return Ok(())
+            },
         };
         let constant = match self.constants.iter().position(|i| {
             return if let ConstantValues::Function { name: fname, context_variables, .. } = i {
@@ -215,7 +227,13 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             };
         }) {
             Some(i) => i,
-            None => return Ok(()),
+            None => {
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Constant(nil_constant),
+                    location: self.locations.len() - 1,
+                });
+                return Ok(())
+            },
         };
         let context_variables = if let ConstantValues::Function { context_variables, .. } = &self.constants[constant] {
             *context_variables
@@ -258,9 +276,8 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             instruction_type: InstructionType::AttachArray(global),
             location: self.locations.len() - 1,
         });
-        let constant = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
         self.add_instruction(Instruction {
-            instruction_type: InstructionType::Constant(constant),
+            instruction_type: InstructionType::Constant(nil_constant),
             location: self.locations.len() - 1,
         });
         Ok(())

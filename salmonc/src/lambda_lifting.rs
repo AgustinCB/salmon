@@ -1,4 +1,4 @@
-use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression, StatementFactory, ExpressionFactory};
+use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression, StatementFactory, ExpressionFactory, TokenType};
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 
 fn leak_reference<'a, T>(s: T) -> &'a T {
@@ -101,20 +101,36 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         body: &'a [Box<Statement<'a>>],
         statement_id: usize,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        let new_function_name = self.create_new_function(None, body.to_vec())?;
+        let mut body = body.to_vec();
+        body.push(Box::new(self.statement_factory.new_statement(
+            self.current_location.clone().unwrap(),
+            StatementType::Return { value: None },
+        )));
+        let new_function_name = self.create_new_function(None, body)?;
         let callee = Box::new(self.expression_factory.new_expression(
             ExpressionType::VariableLiteral {
                 identifier: new_function_name,
             },
             self.current_location.clone().unwrap(),
         ));
-        self.statement_changes.insert(statement_id, StatementType::Expression {
-            expression: self.expression_factory.new_expression(
+        let expression = ExpressionType::Binary {
+            left: Box::new(self.expression_factory.new_expression(
+                ExpressionType::UpliftFunctionVariables(new_function_name),
+                self.current_location.clone().unwrap(),
+            )),
+            operator: TokenType::Bar,
+            right: Box::new(self.expression_factory.new_expression(
                 ExpressionType::Call {
                     arguments: vec![],
                     callee,
                 },
                 self.current_location.clone().unwrap(),
+            )),
+        };
+        self.statement_changes.insert(statement_id, StatementType::Expression {
+            expression: self.expression_factory.new_expression(
+                expression,
+                self.current_location.clone().unwrap()
             ),
         });
         Ok(())
