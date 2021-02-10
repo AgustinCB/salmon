@@ -24,7 +24,6 @@ pub struct Compiler<'a> {
     pub constants: Vec<ConstantValues<'a>>,
     buffer: Vec<Instruction>,
     function_instructions: Vec<Instruction>,
-    functions: HashMap<&'a str, usize>,
     instructions: Vec<Instruction>,
     last_location: Option<SourceCodeLocation<'a>>,
     locals: HashMap<usize, usize>,
@@ -39,7 +38,6 @@ impl<'a> Compiler<'a> {
             buffer: vec![],
             constants: vec![],
             function_instructions: vec![],
-            functions: HashMap::default(),
             instructions: vec![],
             last_location: None,
             locations: vec![],
@@ -315,6 +313,24 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
+    fn pass_class_declaration(
+        &mut self,
+        _name: &'a str,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        _superclass: &'a Option<Expression<'a>>,
+        _statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        for ss in vec![methods, static_methods, setters, getters] {
+            for s in ss {
+                self.pass(s)?;
+            }
+        }
+        Ok(())
+    }
+
     fn pass_function_declaration(
         &mut self,
         name: &'a str,
@@ -493,18 +509,10 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             }
             Ok(())
         } else {
-            if let Some(constant) = self.functions.get(identifier).cloned() {
-                self.add_instruction(Instruction {
-                    instruction_type: InstructionType::Constant(constant),
-                    location: self.locations.len() - 1,
-                });
-                Ok(())
-            } else {
-                Err(vec![ProgramError {
-                    message: format!("Variable {} not declared", identifier),
-                    location: self.locations.last().unwrap().clone(),
-                }])
-            }
+            Err(vec![ProgramError {
+                message: format!("Variable {} not declared", identifier),
+                location: self.locations.last().unwrap().clone(),
+            }])
         }
     }
 

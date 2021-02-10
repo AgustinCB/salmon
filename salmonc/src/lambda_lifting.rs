@@ -8,6 +8,7 @@ fn leak_reference<'a, T>(s: T) -> &'a T {
 pub struct LambdaLifting<'a> {
     change_name: bool,
     changes: HashMap<usize, ExpressionType<'a>>,
+    class_counter: usize,
     current_location: Option<SourceCodeLocation<'a>>,
     expression_factory: ExpressionFactory,
     function_counter: usize,
@@ -28,6 +29,7 @@ impl<'a> LambdaLifting<'a> {
         LambdaLifting {
             change_name: true,
             changes: HashMap::default(),
+            class_counter: 0,
             current_location: None,
             function_counter: 0,
             missed_locals: Vec::default(),
@@ -80,6 +82,25 @@ impl<'a> LambdaLifting<'a> {
         let _ = unsafe { Box::from_raw(r) };
         Ok(new_function_name)
     }
+
+    fn class_methods_to_variable_accessors(&mut self, methods: &'a [Box<Statement<'a>>]) -> Result<Vec<Box<Statement<'a>>>, Vec<ProgramError<'a>>> {
+        methods.iter().map(|s| {
+            self.pass(s)?;
+            if let Some(StatementType::FunctionDeclaration { name, .. }) = self.output.last().map(|s| &s.statement_type) {
+                Ok(Box::new(self.statement_factory.new_statement(
+                    s.location.clone(),
+                    StatementType::Expression {
+                        expression: self.expression_factory.new_expression(
+                            ExpressionType::UpliftFunctionVariables(name),
+                            s.location.clone(),
+                        )
+                    },
+                )))
+            } else {
+                panic!("Last statement should be a function!")
+            }
+        }).collect()
+    }
 }
 
 type LambdaLiftingResult<'a> = (Vec<Statement<'a>>, HashMap<usize, ExpressionType<'a>>, HashMap<usize, StatementType<'a>>);
@@ -88,7 +109,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<LambdaLiftingResult<'a>, Vec<ProgramError<'a>>> {
         for s in ss {
             self.current_location = Some(s.location.clone());
-            if self.scopes.len() == 1 && !s.is_function_declaration() {
+            if self.scopes.len() == 1 && !s.is_function_declaration() && !s.is_class_declaration() {
                 self.output.push(s.clone());
             }
             self.pass(s)?;
@@ -159,24 +180,23 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         let mut new_body = vec![];
         for s in body.iter() {
             self.pass(s)?;
-            let statement = match &s.statement_type {
-                StatementType::FunctionDeclaration { .. } => {
-                    if let Some(StatementType::FunctionDeclaration { name, .. }) =
-                        self.output.last().map(|s| &s.statement_type) {
-                        Box::new(self.statement_factory.new_statement(
-                            s.location.clone(),
-                            StatementType::Expression {
-                                expression: self.expression_factory.new_expression(
-                                    ExpressionType::UpliftFunctionVariables(name),
-                                    s.location.clone(),
-                                )
-                            },
-                        ))
-                    } else {
-                        panic!("Last statement should be a function!")
-                    }
-                },
-                _ => s.clone(),
+            let statement = if s.is_function_declaration() {
+                if let Some(StatementType::FunctionDeclaration { name, .. }) =
+                    self.output.last().map(|s| &s.statement_type) {
+                    Box::new(self.statement_factory.new_statement(
+                        s.location.clone(),
+                        StatementType::Expression {
+                            expression: self.expression_factory.new_expression(
+                                ExpressionType::UpliftFunctionVariables(name),
+                                s.location.clone(),
+                            )
+                        },
+                    ))
+                } else {
+                    panic!("Last statement should be a function!")
+                }
+            } else {
+                s.clone()
             };
             new_body.push(statement);
         }
@@ -189,6 +209,45 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
                 arguments: arguments.to_vec(),
                 body: new_body,
                 context_variables: missed_locals,
+            },
+        ));
+        Ok(())
+    }
+
+    fn pass_class_declaration(
+        &mut self,
+        name: &'a str,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        _superclass: &'a Option<Expression<'a>>,
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let new_class_name = leak_reference(format!("@class{}", self.class_counter));
+        self.class_counter += 1;
+        let scope = self.scopes.len()-1;
+        self.scopes[scope].insert(name, new_class_name);
+        self.scopes.push(HashMap::default());
+        for ss in vec![methods, static_methods, setters, getters] {
+            for s in ss {
+                self.pass(s)?;
+            }
+        }
+        self.scopes.pop();
+        let new_methods = self.class_methods_to_variable_accessors(methods)?;
+        let new_static_methods = self.class_methods_to_variable_accessors(static_methods)?;
+        let new_getters = self.class_methods_to_variable_accessors(getters)?;
+        let new_setters = self.class_methods_to_variable_accessors(setters)?;
+        self.output.push(self.statement_factory.new_statement(
+            statement.location.clone(),
+            StatementType::ClassDeclaration {
+                name,
+                superclass: None,
+                methods: new_methods,
+                static_methods: new_static_methods,
+                getters: new_getters,
+                setters: new_setters,
             },
         ));
         Ok(())
