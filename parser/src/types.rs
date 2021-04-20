@@ -237,6 +237,7 @@ pub enum ExpressionType<'a> {
         checked_type: Type<'a>,
     },
     UpliftFunctionVariables(&'a str),
+    UpliftClassVariables(&'a str),
 }
 
 impl<'a> Expression<'a> {
@@ -495,7 +496,12 @@ pub trait MutPass<'a, R> {
                 index,
                 value,
             } => self.pass_array_element_set(array, index, value)?,
+            ExpressionType::UpliftClassVariables(name) => self.pass_uplift_class_variables(name)?,
         };
+        Ok(())
+    }
+
+    fn pass_uplift_class_variables(&mut self, _name: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
         Ok(())
     }
 
@@ -836,6 +842,7 @@ pub trait Pass<'a, R> {
 
     fn pass_expression(&mut self, expression: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
         match &expression.expression_type {
+            ExpressionType::UpliftClassVariables(name) => self.pass_uplift_class_variables(name)?,
             ExpressionType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
             ExpressionType::IsType { value, checked_type } =>
                 self.pass_checked_type(value, checked_type)?,
@@ -888,6 +895,10 @@ pub trait Pass<'a, R> {
     }
 
     fn pass_expression_literal(&mut self, _value: &'a Literal<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+        Ok(())
+    }
+
+    fn pass_uplift_class_variables(&mut self, _name: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
         Ok(())
     }
 

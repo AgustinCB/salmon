@@ -91,7 +91,7 @@ impl<'a> LambdaLifting<'a> {
                     s.location.clone(),
                     StatementType::Expression {
                         expression: self.expression_factory.new_expression(
-                            ExpressionType::UpliftFunctionVariables(name),
+                            ExpressionType::VariableLiteral { identifier: name },
                             s.location.clone(),
                         )
                     },
@@ -181,13 +181,12 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         for s in body.iter() {
             self.pass(s)?;
             let statement = if s.is_function_declaration() {
-                if let Some(StatementType::FunctionDeclaration { name, .. }) =
-                    self.output.last().map(|s| &s.statement_type) {
+                if let StatementType::FunctionDeclaration { name, .. } = s.statement_type {
                     Box::new(self.statement_factory.new_statement(
                         s.location.clone(),
                         StatementType::Expression {
                             expression: self.expression_factory.new_expression(
-                                ExpressionType::UpliftFunctionVariables(name),
+                                ExpressionType::UpliftFunctionVariables(self.scopes[self.scopes.len()-1][name]),
                                 s.location.clone(),
                             )
                         },
@@ -229,20 +228,15 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         let scope = self.scopes.len()-1;
         self.scopes[scope].insert(name, new_class_name);
         self.scopes.push(HashMap::default());
-        for ss in vec![methods, static_methods, setters, getters] {
-            for s in ss {
-                self.pass(s)?;
-            }
-        }
-        self.scopes.pop();
         let new_methods = self.class_methods_to_variable_accessors(methods)?;
         let new_static_methods = self.class_methods_to_variable_accessors(static_methods)?;
         let new_getters = self.class_methods_to_variable_accessors(getters)?;
         let new_setters = self.class_methods_to_variable_accessors(setters)?;
+        self.scopes.pop();
         self.output.push(self.statement_factory.new_statement(
             statement.location.clone(),
             StatementType::ClassDeclaration {
-                name,
+                name: new_class_name,
                 superclass: None,
                 methods: new_methods,
                 static_methods: new_static_methods,

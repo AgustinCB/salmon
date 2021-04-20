@@ -1,5 +1,5 @@
 use ahash::{AHashMap as HashMap};
-use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type, StatementType};
+use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type, StatementType, ExpressionType};
 use smoked::instruction::{Instruction, InstructionType};
 
 #[derive(Debug, PartialEq)]
@@ -10,6 +10,9 @@ pub enum ConstantValues<'a> {
         ip: usize,
         name: &'a str,
         context_variables: &'a [&'a str],
+    },
+    Class {
+        name: &'a str,
     }
 }
 
@@ -20,9 +23,32 @@ pub enum BufferSelection {
     Function,
 }
 
+type CompilerResult<'a, R> = Result<R, Vec<ProgramError<'a>>>;
+
+pub struct ClassMembers<'a> {
+    methods: Vec<&'a str>,
+    getters: Vec<&'a str>,
+    setters: Vec<&'a str>,
+    static_methods: Vec<&'a str>,
+}
+
+impl<'a> ClassMembers<'a> {
+    pub(crate) fn length(&self) -> usize {
+        self.methods.len() + self.getters.len() + self.setters.len() + self.static_methods.len()
+    }
+    pub(crate) fn for_each_member<F: FnMut(&'a str) -> ()>(&self, mut action: F) {
+        for ms in vec![&self.methods, &self.getters, &self.setters, &self.static_methods] {
+            for m in ms {
+                action(m);
+            }
+        }
+    }
+}
+
 pub struct Compiler<'a> {
     pub constants: Vec<ConstantValues<'a>>,
     buffer: Vec<Instruction>,
+    pub class_members: HashMap<&'a str, ClassMembers<'a>>,
     function_instructions: Vec<Instruction>,
     instructions: Vec<Instruction>,
     last_location: Option<SourceCodeLocation<'a>>,
@@ -36,6 +62,7 @@ impl<'a> Compiler<'a> {
     pub fn new(locals: HashMap<usize, usize>) -> Compiler<'a> {
         Compiler {
             buffer: vec![],
+            class_members: HashMap::default(),
             constants: vec![],
             function_instructions: vec![],
             instructions: vec![],
@@ -97,7 +124,7 @@ impl<'a> Compiler<'a> {
         arguments: &'a [&'a str],
         body: I,
         context_variables: &'a [&'a str],
-    ) -> Result<usize, Vec<ProgramError<'a>>> {
+    ) -> CompilerResult<'a, usize> {
         let constant = self.constant_from_literal(ConstantValues::Function {
             arity: arguments.len(),
             ip: self.function_instructions.len(),
@@ -105,8 +132,7 @@ impl<'a> Compiler<'a> {
             name,
         });
         let previous = self.toggle_selection;
-        let prev_functions_size = self.function_instructions.len();
-        self.toggle_selection(BufferSelection::Function);
+        let prev_functions_size = self.function_instructions.len(); self.toggle_selection(BufferSelection::Function);
         let mut new_scope = HashMap::default();
         for (i, n) in context_variables.iter().cloned().enumerate() {
             new_scope.insert(n, i);
@@ -140,6 +166,49 @@ impl<'a> Compiler<'a> {
                 location: self.locations.len() - 1,
             });
         }
+    }
+
+    fn class_members_to_vec(&mut self, statements: &'a [Box<Statement<'a>>]) -> CompilerResult<'a, Vec<&'a str>> {
+        let mut members = vec![];
+        for s in statements {
+            if let StatementType::Expression { expression, .. } = &s.statement_type {
+                if let ExpressionType::VariableLiteral { identifier } = &expression.expression_type {
+                    let _ = self.constant_from_literal(ConstantValues::Literal(
+                        Literal::QuotedString(*identifier)
+                    ));
+                    members.push(*identifier);
+                } else {
+                    return Err(self.create_single_error("Expected variable literal on class member".to_string()))
+                }
+            } else {
+                return Err(self.create_single_error("Expected expression statement on class member".to_string()))
+            }
+        }
+        Ok(members)
+    }
+
+    fn store_class_members(
+        &mut self,
+        class_name: &'a str,
+        methods: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+    ) -> CompilerResult<'a, ()> {
+        let methods = self.class_members_to_vec(methods)?;
+        let getters = self.class_members_to_vec(getters)?;
+        let setters = self.class_members_to_vec(setters)?;
+        let static_methods = self.class_members_to_vec(static_methods)?;
+        let members = ClassMembers { methods, getters, setters, static_methods };
+        self.class_members.insert(class_name, members);
+        Ok(())
+    }
+
+    fn create_single_error(&self, message: String) -> Vec<ProgramError<'a>> {
+        vec![ProgramError {
+            location: self.locations.last().unwrap().clone(),
+            message
+        }]
     }
 }
 
@@ -191,6 +260,64 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         let constant_index = self.constant_from_literal(ConstantValues::Literal(value.clone()));
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant_index),
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_class_declaration(
+        &mut self,
+        name: &'a str,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        superclass: &'a Option<Expression<'a>>,
+        _statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        for ss in vec![methods, static_methods, setters, getters] {
+            for s in ss {
+                self.pass(s)?;
+            }
+        }
+        self.store_class_members(name, methods, getters, setters, static_methods)?;
+        if let Some(e) = superclass {
+            self.pass_expression(e)?;
+        }
+        let constant = self.constant_from_literal(ConstantValues::Class {
+            name,
+        });
+        let global_index = self.scopes[0].len();
+        self.scopes[0].insert(name, global_index);
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(constant),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::SetGlobal(global_index),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Pop,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_uplift_class_variables(&mut self, name: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
+        let nil_constant = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
+        let members = self.class_members.get(name).ok_or(self.create_single_error("Class not declared yet".to_string()))?;
+        let mut names = vec![];
+        for ms in vec![&members.methods, &members.setters, &members.getters, &members.static_methods] {
+            for m in ms {
+                names.push(m.clone());
+            }
+        }
+        for name in names {
+            self.pass_uplift_function_variables(name)?;
+        }
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(nil_constant),
             location: self.locations.len() - 1,
         });
         Ok(())
@@ -310,24 +437,6 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             instruction_type: InstructionType::Pop,
             location: self.locations.len() - 1,
         });
-        Ok(())
-    }
-
-    fn pass_class_declaration(
-        &mut self,
-        _name: &'a str,
-        methods: &'a [Box<Statement<'a>>],
-        static_methods: &'a [Box<Statement<'a>>],
-        setters: &'a [Box<Statement<'a>>],
-        getters: &'a [Box<Statement<'a>>],
-        _superclass: &'a Option<Expression<'a>>,
-        _statement: &'a Statement<'a>,
-    ) -> Result<(), Vec<ProgramError<'a>>> {
-        for ss in vec![methods, static_methods, setters, getters] {
-            for s in ss {
-                self.pass(s)?;
-            }
-        }
         Ok(())
     }
 
@@ -510,7 +619,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             Ok(())
         } else {
             Err(vec![ProgramError {
-                message: format!("Variable {} not declared", identifier),
+                message: format!("Variable literal {} not declared", identifier),
                 location: self.locations.last().unwrap().clone(),
             }])
         }
@@ -536,7 +645,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             Ok(())
         } else {
             Err(vec![ProgramError {
-                message: format!("Variable {} not declared", identifier),
+                message: format!("Variable {} not declared on assignment", identifier),
                 location: self.locations.last().unwrap().clone(),
             }])
         }

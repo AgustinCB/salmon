@@ -13,9 +13,10 @@ use std::process::exit;
 use smoked::cpu::{Value, Location};
 use smoked::instruction::Instruction;
 use smoked::serde::to_bytes;
-use std::collections::HashMap;
-use crate::compiler::ConstantValues;
+use ahash::{AHashMap as HashMap};
+use crate::compiler::{ConstantValues, ClassMembers};
 use crate::lambda_lifting::LambdaLifting;
+use std::mem::size_of;
 
 mod changes;
 mod compiler;
@@ -67,15 +68,17 @@ fn handle_result<T>(result: Result<T, Vec<ProgramError>>) -> T {
 
 fn create_vm<'a>(
     literals: Vec<ConstantValues<'a>>,
+    class_members: HashMap<&'a str, ClassMembers<'a>>,
     source_code_locations: Vec<SourceCodeLocation<'a>>,
     rom: Vec<Instruction>,
 ) -> Result<Vec<u8>, Error> {
     let mut last_address = 0usize;
     let mut constants = vec![];
     let mut locations = vec![];
-    let mut location_indexes = HashMap::new();
+    let mut location_indexes: HashMap<SourceCodeLocation<'a>, usize> = HashMap::default();
     let mut memory = vec![];
-    let mut string_address = HashMap::new();
+    let mut string_address: HashMap<&'a str, usize> = HashMap::default();
+    let mut functions: HashMap<&'a str, Value> = HashMap::default();
     for c in literals.iter() {
         match c {
             ConstantValues::Literal(Literal::QuotedString(s)) => {
@@ -94,13 +97,37 @@ fn create_vm<'a>(
             ConstantValues::Literal(Literal::Keyword(DataKeyword::True)) => constants.push(Value::Bool(true)),
             ConstantValues::Literal(Literal::Keyword(DataKeyword::False)) => constants.push(Value::Bool(false)),
             ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)) => constants.push(Value::Nil),
-            ConstantValues::Function { arity, ip, .. } => constants.push(Value::Function { ip: *ip, arity: *arity, uplifts: None }),
+            ConstantValues::Function { arity, ip, name, .. } => {
+                let function = Value::Function { ip: *ip, arity: *arity, uplifts: None };
+                functions.insert(name, function.clone());
+                constants.push(function)
+            },
+            ConstantValues::Class { name } => {
+                let address = last_address;
+                let members_length = class_members.get(name).unwrap().length();
+                let mut members_bytes = members_length.to_be_bytes().to_vec();
+                class_members.get(name).unwrap().for_each_member(|name| {
+                    let m = functions.get(name).unwrap().clone();
+                    let content: Vec<u8> = m.into();
+                    let k = string_address.get(name).unwrap().clone();
+                    let p: &[u8] = unsafe {
+                        std::slice::from_raw_parts(&k as *const usize as *const u8, size_of::<usize>())
+                    };
+                    members_bytes.extend_from_slice(p);
+                    members_bytes.extend_from_slice(&content);
+                });
+                let capacity = members_bytes.len();
+                last_address += capacity;
+                memory.extend_from_slice(&members_bytes);
+                constants.push(Value::Object { capacity, address });
+            }
         }
     }
 
     for scl in source_code_locations.iter() {
         if location_indexes.get(scl).is_none() {
-            location_indexes.insert(scl.clone(), location_indexes.len());
+            let new_value = location_indexes.len();
+            location_indexes.insert(scl.clone(), new_value);
             let address = if string_address.get(&scl.file).is_none() {
                 let address = last_address;
                 last_address += scl.file.len();
@@ -166,12 +193,12 @@ fn main() {
     let locals = handle_result(Resolver::new_without_check_used().run(&ss));
     let mut c = compiler::Compiler::new(locals);
     let instructions = handle_result(c.run(&ss));
-    let (literals, locations) = (c.constants, c.locations);
+    let (literals, locations, class_members) = (c.constants, c.locations, c.class_members);
     if config.show_instructions {
         println!("Instructions: {:?}", instructions);
         println!("Literals: {:?}", &literals);
     } else {
-        let vm = create_vm(literals, locations, instructions).unwrap();
+        let vm = create_vm(literals, class_members, locations, instructions).unwrap();
         output.write_all(&vm).unwrap();
     }
 }

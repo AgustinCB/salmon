@@ -82,6 +82,7 @@ impl<'a> MutPass<'a, ()> for Changes<'a> {
             expression.expression_type = new_expression_type;
         }
         match &mut expression.expression_type {
+            ExpressionType::UpliftClassVariables(name) => self.pass_uplift_class_variables(name)?,
             ExpressionType::UpliftFunctionVariables(name) => self.pass_uplift_function_variables(name)?,
             ExpressionType::IsType { value, checked_type } =>
                 self.pass_checked_type(value, checked_type)?,
