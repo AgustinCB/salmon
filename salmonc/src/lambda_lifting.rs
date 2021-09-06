@@ -86,15 +86,24 @@ impl<'a> LambdaLifting<'a> {
     fn class_methods_to_variable_accessors(&mut self, methods: &'a [Box<Statement<'a>>]) -> Result<Vec<Box<Statement<'a>>>, Vec<ProgramError<'a>>> {
         methods.iter().map(|s| {
             self.pass(s)?;
-            if let Some(StatementType::FunctionDeclaration { name, .. }) = self.output.last().map(|s| &s.statement_type) {
+            if let (StatementType::FunctionDeclaration { name, .. },
+                StatementType::FunctionDeclaration { name: new_name, .. }) =
+                (&s.statement_type, &self.output.last().unwrap().statement_type) {
+                let right = Box::new(self.expression_factory.new_expression(
+                    ExpressionType::VariableLiteral { identifier: name },
+                    s.location.clone(),
+                ));
+                let left = Box::new(self.expression_factory.new_expression(
+                    ExpressionType::VariableLiteral { identifier: new_name },
+                    s.location.clone(),
+                ));
+                let expression = self.expression_factory.new_expression(
+                    ExpressionType::Binary { left, right, operator: TokenType::Comma, },
+                    s.location.clone(),
+                );
                 Ok(Box::new(self.statement_factory.new_statement(
                     s.location.clone(),
-                    StatementType::Expression {
-                        expression: self.expression_factory.new_expression(
-                            ExpressionType::VariableLiteral { identifier: name },
-                            s.location.clone(),
-                        )
-                    },
+                    StatementType::Expression { expression },
                 )))
             } else {
                 panic!("Last statement should be a function!")

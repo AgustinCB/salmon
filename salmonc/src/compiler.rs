@@ -1,6 +1,7 @@
 use ahash::{AHashMap as HashMap};
 use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type, StatementType, ExpressionType};
 use smoked::instruction::{Instruction, InstructionType};
+use std::collections::BTreeMap;
 
 #[derive(Debug, PartialEq)]
 pub enum ConstantValues<'a> {
@@ -26,21 +27,33 @@ pub enum BufferSelection {
 type CompilerResult<'a, R> = Result<R, Vec<ProgramError<'a>>>;
 
 pub struct ClassMembers<'a> {
-    methods: Vec<&'a str>,
-    getters: Vec<&'a str>,
-    setters: Vec<&'a str>,
-    static_methods: Vec<&'a str>,
+    methods: HashMap<&'a str, &'a str>,
+    getters: HashMap<&'a str, &'a str>,
+    setters: HashMap<&'a str, &'a str>,
+    static_methods: HashMap<&'a str, &'a str>,
 }
 
 impl<'a> ClassMembers<'a> {
     pub(crate) fn length(&self) -> usize {
         self.methods.len() + self.getters.len() + self.setters.len() + self.static_methods.len()
     }
-    pub(crate) fn for_each_member<F: FnMut(&'a str) -> ()>(&self, mut action: F) {
+    pub(crate) fn for_each_member<F: FnMut(&'a str, &'a str) -> ()>(&self, mut action: F) {
         for ms in vec![&self.methods, &self.getters, &self.setters, &self.static_methods] {
-            for m in ms {
-                action(m);
+            for (key, value) in ms {
+                action(key, value);
             }
+        }
+    }
+
+    pub(crate) fn for_each_member_in_order<F: FnMut(&'a str, &'a str) -> ()>(&self, mut action: F) {
+        let mut ordered_map = BTreeMap::default();
+        for ms in vec![&self.methods, &self.getters, &self.setters, &self.static_methods] {
+            for (key, value) in ms {
+                ordered_map.insert(key, value);
+            }
+        }
+        for (key, value) in ordered_map {
+            action(*key, *value)
         }
     }
 }
@@ -51,7 +64,6 @@ pub struct Compiler<'a> {
     pub class_members: HashMap<&'a str, ClassMembers<'a>>,
     function_instructions: Vec<Instruction>,
     instructions: Vec<Instruction>,
-    last_location: Option<SourceCodeLocation<'a>>,
     locals: HashMap<usize, usize>,
     pub locations: Vec<SourceCodeLocation<'a>>,
     scopes: Vec<HashMap<&'a str, usize>>,
@@ -66,7 +78,6 @@ impl<'a> Compiler<'a> {
             constants: vec![],
             function_instructions: vec![],
             instructions: vec![],
-            last_location: None,
             locations: vec![],
             scopes: vec![HashMap::default()],
             toggle_selection: BufferSelection::Rom,
@@ -168,15 +179,28 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn class_members_to_vec(&mut self, statements: &'a [Box<Statement<'a>>]) -> CompilerResult<'a, Vec<&'a str>> {
-        let mut members = vec![];
+    fn class_members_to_vec(&mut self, statements: &'a [Box<Statement<'a>>]) -> CompilerResult<'a, HashMap<&'a str, &'a str>> {
+        let mut members = HashMap::default();
         for s in statements {
             if let StatementType::Expression { expression, .. } = &s.statement_type {
-                if let ExpressionType::VariableLiteral { identifier } = &expression.expression_type {
+                if let ExpressionType::Binary {
+                    right: box Expression {
+                        expression_type: ExpressionType::VariableLiteral { identifier: name },
+                        ..
+                    },
+                    operator: TokenType::Comma,
+                    left: box Expression {
+                        expression_type: ExpressionType::VariableLiteral { identifier: new_name },
+                        ..
+                    }
+                } = &expression.expression_type {
                     let _ = self.constant_from_literal(ConstantValues::Literal(
-                        Literal::QuotedString(*identifier)
+                        Literal::QuotedString(*name)
                     ));
-                    members.push(*identifier);
+                    let _ = self.constant_from_literal(ConstantValues::Literal(
+                        Literal::QuotedString(*new_name)
+                    ));
+                    members.insert(*name, *new_name);
                 } else {
                     return Err(self.create_single_error("Expected variable literal on class member".to_string()))
                 }
@@ -239,7 +263,6 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
 
     fn before_pass(&mut self, s: &Statement<'a>) {
         if !self.locations.contains(&s.location) {
-            self.last_location = Some(s.location.clone());
             self.locations.push(s.location.clone());
         }
     }
@@ -265,54 +288,13 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         Ok(())
     }
 
-    fn pass_class_declaration(
-        &mut self,
-        name: &'a str,
-        methods: &'a [Box<Statement<'a>>],
-        static_methods: &'a [Box<Statement<'a>>],
-        setters: &'a [Box<Statement<'a>>],
-        getters: &'a [Box<Statement<'a>>],
-        superclass: &'a Option<Expression<'a>>,
-        _statement: &'a Statement<'a>,
-    ) -> Result<(), Vec<ProgramError<'a>>> {
-        for ss in vec![methods, static_methods, setters, getters] {
-            for s in ss {
-                self.pass(s)?;
-            }
-        }
-        self.store_class_members(name, methods, getters, setters, static_methods)?;
-        if let Some(e) = superclass {
-            self.pass_expression(e)?;
-        }
-        let constant = self.constant_from_literal(ConstantValues::Class {
-            name,
-        });
-        let global_index = self.scopes[0].len();
-        self.scopes[0].insert(name, global_index);
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::Constant(constant),
-            location: self.locations.len() - 1,
-        });
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::SetGlobal(global_index),
-            location: self.locations.len() - 1,
-        });
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::Pop,
-            location: self.locations.len() - 1,
-        });
-        Ok(())
-    }
-
     fn pass_uplift_class_variables(&mut self, name: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
         let nil_constant = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
         let members = self.class_members.get(name).ok_or(self.create_single_error("Class not declared yet".to_string()))?;
         let mut names = vec![];
-        for ms in vec![&members.methods, &members.setters, &members.getters, &members.static_methods] {
-            for m in ms {
-                names.push(m.clone());
-            }
-        }
+        members.for_each_member(|_, m| {
+            names.push(m.clone());
+        });
         for name in names {
             self.pass_uplift_function_variables(name)?;
         }
@@ -433,6 +415,40 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             });
         }
         self.add_set_instruction(scope_id, var_id);
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Pop,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_class_declaration(
+        &mut self,
+        name: &'a str,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        superclass: &'a Option<Expression<'a>>,
+        _statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.store_class_members(name, methods, getters, setters, static_methods)?;
+        if let Some(e) = superclass {
+            self.pass_expression(e)?;
+        }
+        let constant = self.constant_from_literal(ConstantValues::Class {
+            name,
+        });
+        let global_index = self.scopes[0].len();
+        self.scopes[0].insert(name, global_index);
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(constant),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::SetGlobal(global_index),
+            location: self.locations.len() - 1,
+        });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Pop,
             location: self.locations.len() - 1,
@@ -596,6 +612,29 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             location: self.locations.len() - 1,
         });
         Ok(())
+    }
+
+    fn pass_get(&mut self, callee: &'a Expression<'a>, property: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
+        let constant = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(property)));
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(constant),
+            location: self.locations.len() - 1,
+        });
+        self.pass_expression(callee)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ObjectGet,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
+    }
+
+    fn pass_set(
+        &mut self,
+        callee: &'a Expression<'a>,
+        value: &'a Expression<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        self.pass_expression(callee)?;
+        self.pass_expression(value)
     }
 
     fn pass_variable_literal(

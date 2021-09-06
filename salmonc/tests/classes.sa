@@ -2,6 +2,16 @@ class DevonshireCream {
   serveOn() {
     return "Scones";
   }
+  serveWith(condiment) {
+    return condiment;
+  }
 }
 
 print DevonshireCream;
+var obj = DevonshireCream();
+print obj;
+print DevonshireCream.serveOn();
+print obj.serveOn();
+print DevonshireCream.serveOn;
+print obj.serveOn;
+print obj.serveWith("cream");

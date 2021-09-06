@@ -1,5 +1,6 @@
 #![feature(exact_size_is_empty)]
-#![feature(vec_remove_item)]
+#![feature(box_patterns)]
+
 use failure::Error;
 use parser::lexer::Lexer;
 use parser::parser::Parser;
@@ -85,7 +86,7 @@ fn create_vm<'a>(
                 if string_address.get(s).is_none() {
                     let address = last_address;
                     last_address += s.len();
-                    string_address.insert(*s, address);
+                    string_address.insert(s, address);
                     memory.extend_from_slice(s.as_bytes());
                     constants.push(Value::String(address));
                 } else {
@@ -105,16 +106,21 @@ fn create_vm<'a>(
             ConstantValues::Class { name } => {
                 let address = last_address;
                 let members_length = class_members.get(name).unwrap().length();
-                let mut members_bytes = members_length.to_be_bytes().to_vec();
-                class_members.get(name).unwrap().for_each_member(|name| {
-                    let m = functions.get(name).unwrap().clone();
-                    let content: Vec<u8> = m.into();
+                let members_length_bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(&members_length as *const usize as *const u8, size_of::<usize>())
+                };
+                let mut members_bytes = members_length_bytes.to_vec();
+                class_members.get(name).unwrap().for_each_member_in_order(|name, function| {
+                    let m = functions.get(function).unwrap().clone();
+                    let content: &[u8] = unsafe {
+                        std::slice::from_raw_parts(&m as *const Value as *const u8, size_of::<Value>())
+                    };
                     let k = string_address.get(name).unwrap().clone();
                     let p: &[u8] = unsafe {
                         std::slice::from_raw_parts(&k as *const usize as *const u8, size_of::<usize>())
                     };
                     members_bytes.extend_from_slice(p);
-                    members_bytes.extend_from_slice(&content);
+                    members_bytes.extend_from_slice(content);
                 });
                 let capacity = members_bytes.len();
                 last_address += capacity;

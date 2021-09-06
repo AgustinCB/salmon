@@ -849,7 +849,7 @@ pub trait Pass<'a, R> {
             ExpressionType::ModuleLiteral {
                 module, field,
             } => self.pass_module_literal(module, field, expression)?,
-            ExpressionType::Get { callee, .. } => self.pass_get(callee)?,
+            ExpressionType::Get { callee, property } => self.pass_get(callee, *property)?,
             ExpressionType::Set { callee, value, .. } =>
                 self.pass_set(callee, value)?,
             ExpressionType::VariableLiteral { identifier } => self.pass_variable_literal(identifier, expression)?,
@@ -1068,7 +1068,7 @@ pub trait Pass<'a, R> {
         self.pass_expression(field)
     }
 
-    fn pass_get(&mut self, callee: &'a Expression<'a>) -> Result<(), Vec<ProgramError<'a>>> {
+    fn pass_get(&mut self, callee: &'a Expression<'a>, _property: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(callee)
     }
 
