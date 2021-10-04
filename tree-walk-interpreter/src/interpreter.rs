@@ -232,6 +232,8 @@ impl<'a> Interpreter<'a> {
                         expression.create_program_error(&format!("Variable `{}` not found!", identifier))
                     }),
             ExpressionType::Grouping { expression } => self.evaluate_expression(expression),
+            ExpressionType::UpliftFunctionVariables(_) => return Ok(Value::Nil),
+            ExpressionType::UpliftClassVariables(_) => return Ok(Value::Nil),
             ExpressionType::Unary {
                 operand,
                 operator: TokenType::Minus,
@@ -591,7 +593,6 @@ impl<'a> Interpreter<'a> {
             StatementType::Break if self.state.borrow().loop_count > 0 => {
                 self.state.borrow_mut().broke_loop = true;
             }
-            StatementType::UpliftFunctionVariables(_) => return Ok(Value::Nil),
             StatementType::Break =>
                 return Err(statement.create_program_error("Break outside loop")),
         };
@@ -1034,7 +1035,7 @@ impl<'a> Interpreter<'a> {
 
 #[cfg(test)]
 mod common_test {
-    use parser::types::{ExpressionType, SourceCodeLocation, Expression, ExpressionFactory};
+    use parser::types::{ExpressionType, SourceCodeLocation, Expression, ExpressionFactory, Statement, StatementType, StatementFactory,};
 
     pub fn create_expression<'a>(
         expression_type: ExpressionType<'a>,
@@ -1042,6 +1043,14 @@ mod common_test {
     ) -> Expression<'a> {
         let mut factory = ExpressionFactory::new();
         factory.new_expression(expression_type, location)
+    }
+
+    pub fn create_statement<'a>(
+        statement_type: StatementType<'a>,
+        location: SourceCodeLocation<'a>,
+    ) -> Statement<'a> {
+        let mut factory = StatementFactory::new();
+        factory.new_statement(location, statement_type)
     }
 
     pub fn get_variable<'a>(s: &'a str, location: &SourceCodeLocation<'a>) -> Expression<'a> {
@@ -1067,6 +1076,7 @@ mod test_statement {
     use super::common_test::{create_expression, get_variable};
     use crate::interpreter::Interpreter;
     use std::cell::RefCell;
+    use crate::interpreter::common_test::create_statement;
 
     #[test]
     fn test_if_statement() {
@@ -1078,8 +1088,8 @@ mod test_statement {
         locals.insert(0, 0);
         let mut interpreter = Interpreter::new(&[], "");
         interpreter.locals = locals;
-        let statement = Statement {
-            statement_type: StatementType::If {
+        let statement = create_statement(
+            StatementType::If {
                 condition: create_expression_number(1.0, &location),
                 then: Box::new(create_variable_assignment_statement(
                     "identifier",
@@ -1093,7 +1103,7 @@ mod test_statement {
                 ))),
             },
             location,
-        };
+        );
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 2.0 });
         interpreter.state = RefCell::new(state);
@@ -1111,8 +1121,8 @@ mod test_statement {
         locals.insert(0, 0);
         let mut interpreter = Interpreter::new(&[], "");
         interpreter.locals = locals;
-        let statement = Statement {
-            statement_type: StatementType::If {
+        let statement = create_statement(
+            StatementType::If {
                 condition: create_expression_number(0.0, &location),
                 then: Box::new(create_variable_assignment_statement(
                     "identifier",
@@ -1126,7 +1136,7 @@ mod test_statement {
                 ))),
             },
             location,
-        };
+        );
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 2.0 });
         interpreter.state = RefCell::new(state);
@@ -1162,8 +1172,8 @@ mod test_statement {
         locals.insert(0, 0);
         let mut interpreter = Interpreter::new(&[], "");
         interpreter.locals = locals;
-        let statement = Statement {
-            statement_type: StatementType::Block {
+        let statement = create_statement(
+            StatementType::Block {
                 body: vec![
                     Box::new(create_variable_assignment_statement(
                         "identifier",
@@ -1183,7 +1193,7 @@ mod test_statement {
                 ],
             },
             location,
-        };
+        );
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 2.0 });
         state.insert("identifier1", Value::Float { value: 2.0 });
@@ -1202,13 +1212,13 @@ mod test_statement {
             file: "",
         };
         let mut interpreter = Interpreter::new(&[], "");
-        let statement = Statement {
-            statement_type: StatementType::VariableDeclaration {
+        let statement = create_statement(
+            StatementType::VariableDeclaration {
                 expression: Some(create_expression_number(1.0, &location)),
                 name: "identifier",
             },
             location,
-        };
+        );
         let state = State::default();
         interpreter.state = RefCell::new(state);
         interpreter.evaluate(&statement).unwrap();
@@ -1222,18 +1232,18 @@ mod test_statement {
             file: "",
         };
         let mut interpreter = Interpreter::new(&[], "");
-        let statement = Statement {
-            statement_type: StatementType::FunctionDeclaration {
+        let statement = create_statement(
+            StatementType::FunctionDeclaration {
                 name: "function",
                 arguments: vec![],
-                body: vec![Box::new(Statement {
-                    statement_type: StatementType::EOF,
-                    location: location.clone(),
-                })],
+                body: vec![Box::new(create_statement(
+                    StatementType::EOF,
+                    location.clone(),
+                ))],
                 context_variables: vec![],
             },
-            location: location.clone(),
-        };
+            location.clone(),
+        );
         let state = State::default();
         interpreter.state = RefCell::new(state);
         interpreter.evaluate(&statement).unwrap();
@@ -1243,10 +1253,10 @@ mod test_statement {
                 assert_eq!(lf.arguments, Vec::<String>::new());
                 assert_eq!(
                     lf.body,
-                    vec![&Statement {
-                        statement_type: StatementType::EOF,
-                        location: location.clone(),
-                    }]
+                    vec![&create_statement(
+                        StatementType::EOF,
+                        location.clone(),
+                    )]
                 );
                 assert_eq!(lf.location, location);
             }
@@ -1260,12 +1270,12 @@ mod test_statement {
             line: 1,
             file: "",
         };
-        let statement = Statement {
-            statement_type: StatementType::Return {
+        let statement = create_statement(
+            StatementType::Return {
                 value: Some(create_expression_number(1.0, &location)),
             },
             location,
-        };
+        );
         let mut interpreter = Interpreter::new(&[], "");
         let mut state = State::default();
         state.in_function = true;
@@ -1281,12 +1291,12 @@ mod test_statement {
             file: "",
         };
         let mut interpreter = Interpreter::new(&[], "");
-        let statement = Statement {
-            statement_type: StatementType::Return {
+        let statement = create_statement(
+            StatementType::Return {
                 value: Some(create_expression_number(1.0, &location)),
             },
-            location: location.clone(),
-        };
+            location.clone(),
+        );
         let state = State::default();
         interpreter.state = RefCell::new(state);
         let r = interpreter.evaluate(&statement);
@@ -1305,10 +1315,10 @@ mod test_statement {
             line: 1,
             file: "",
         };
-        let statement = Statement {
-            statement_type: StatementType::Break,
+        let statement = create_statement(
+            StatementType::Break,
             location,
-        };
+        );
         let mut interpreter = Interpreter::new(&[], "");
         let mut state = State::default();
         state.loop_count = 1;
@@ -1324,10 +1334,10 @@ mod test_statement {
             line: 1,
             file: "",
         };
-        let statement = Statement {
-            statement_type: StatementType::Break,
-            location: location.clone(),
-        };
+        let statement = create_statement(
+            StatementType::Break,
+            location.clone(),
+        );
         let interpreter = Interpreter::new(&[], "");
         let r = interpreter.evaluate(&statement);
         assert_eq!(
@@ -1350,8 +1360,8 @@ mod test_statement {
         locals.insert(0, 0);
         let mut interpreter = Interpreter::new(&[], "");
         interpreter.locals = locals;
-        let statement = Statement {
-            statement_type: StatementType::While {
+        let statement = create_statement(
+            StatementType::While {
                 condition: create_expression(
                     ExpressionType::Binary {
                         operator: TokenType::Less,
@@ -1360,8 +1370,8 @@ mod test_statement {
                     },
                     location.clone(),
                 ),
-                action: Box::new(Statement {
-                    statement_type: StatementType::Expression {
+                action: Box::new(create_statement(
+                    StatementType::Expression {
                         expression: create_expression(
                             ExpressionType::VariableAssignment {
                                 identifier: "identifier",
@@ -1377,11 +1387,11 @@ mod test_statement {
                             location.clone(),
                         ),
                     },
-                    location: location.clone(),
-                }),
+                    location.clone(),
+                )),
             },
             location,
-        };
+        );
         let mut state = State::default();
         state.insert("identifier", Value::Float { value: 0.0 });
         interpreter.state = RefCell::new(state);
@@ -1394,8 +1404,8 @@ mod test_statement {
         value: f32,
         location: &SourceCodeLocation<'a>,
     ) -> Statement<'a> {
-        Statement {
-            statement_type: StatementType::Expression {
+        create_statement(
+            StatementType::Expression {
                 expression: create_expression(
                     ExpressionType::VariableAssignment {
                         identifier: id,
@@ -1404,8 +1414,8 @@ mod test_statement {
                     location.clone(),
                 ),
             },
-            location: location.clone(),
-        }
+            location.clone(),
+        )
     }
 
     fn create_expression_number<'a>(value: f32, location: &SourceCodeLocation<'a>) -> Expression<'a> {
@@ -1432,6 +1442,7 @@ mod test_expression {
     use super::common_test::{create_expression, get_variable};
     use std::rc::Rc;
     use std::cell::RefCell;
+    use crate::interpreter::common_test::create_statement;
 
     #[test]
     fn test_expression_literal() {
@@ -1882,13 +1893,13 @@ mod test_expression {
         );
         let mut state = State::default();
         let mut interpreter = Interpreter::new(&[], "");
-        let s = Statement {
-            statement_type: StatementType::VariableDeclaration {
+        let s = create_statement(
+            StatementType::VariableDeclaration {
                 expression: Some(get_number(1.0, &location)),
                 name: "identifier",
             },
-            location: location.clone(),
-        };
+            location.clone(),
+        );
         state.insert("identifier", Value::Float { value: 0.0 });
         state.insert(
             "function",
