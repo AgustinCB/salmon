@@ -166,6 +166,15 @@ pub enum Type<'a> {
     UserDefined(Box<Expression<'a>>),
 }
 
+impl<'a> Type<'a> {
+    pub fn is_object_type(&self) -> bool {
+        match self {
+            Type::Trait | Type::Class | Type::UserDefined(_) => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExpressionType<'a> {
     Conditional {
@@ -382,6 +391,13 @@ impl<'a> Statement<'a> {
     pub fn is_class_declaration(&self) -> bool {
         match self.statement_type {
             StatementType::ClassDeclaration {..} => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_trait_declaration(&self) -> bool {
+        match self.statement_type {
+            StatementType::TraitDeclaration {..} => true,
             _ => false,
         }
     }
@@ -850,8 +866,8 @@ pub trait Pass<'a, R> {
                 module, field,
             } => self.pass_module_literal(module, field, expression)?,
             ExpressionType::Get { callee, property } => self.pass_get(callee, *property)?,
-            ExpressionType::Set { callee, value, .. } =>
-                self.pass_set(callee, value)?,
+            ExpressionType::Set { callee, value, property } =>
+                self.pass_set(callee, value, property)?,
             ExpressionType::VariableLiteral { identifier } => self.pass_variable_literal(identifier, expression)?,
             ExpressionType::VariableAssignment {
                 identifier,
@@ -1076,6 +1092,7 @@ pub trait Pass<'a, R> {
         &mut self,
         callee: &'a Expression<'a>,
         value: &'a Expression<'a>,
+        _property: &'a str,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         self.pass_expression(callee)?;
         self.pass_expression(value)

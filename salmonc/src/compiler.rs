@@ -1,7 +1,9 @@
-use ahash::{AHashMap as HashMap};
-use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type, StatementType, ExpressionType};
+use ahash::{AHashMap as HashMap, RandomState};
+use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type, StatementType, ExpressionType, FunctionHeader};
 use smoked::instruction::{Instruction, InstructionType};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use crate::lambda_lifting::variable_or_module_name;
+use std::iter::FromIterator;
 
 #[derive(Debug, PartialEq)]
 pub enum ConstantValues<'a> {
@@ -33,6 +35,13 @@ pub struct ClassMembers<'a> {
     static_methods: HashMap<&'a str, &'a str>,
 }
 
+pub struct TraitMembers<'a> {
+    methods: &'a [FunctionHeader<'a>],
+    getters: &'a [FunctionHeader<'a>],
+    setters: &'a [FunctionHeader<'a>],
+    static_methods: &'a [FunctionHeader<'a>],
+}
+
 impl<'a> ClassMembers<'a> {
     pub(crate) fn length(&self) -> usize {
         self.methods.len() + self.getters.len() + self.setters.len() + self.static_methods.len()
@@ -62,6 +71,7 @@ pub struct Compiler<'a> {
     pub constants: Vec<ConstantValues<'a>>,
     buffer: Vec<Instruction>,
     pub class_members: HashMap<&'a str, ClassMembers<'a>>,
+    traits: HashMap<&'a str, TraitMembers<'a>>,
     function_instructions: Vec<Instruction>,
     instructions: Vec<Instruction>,
     locals: HashMap<usize, usize>,
@@ -81,6 +91,7 @@ impl<'a> Compiler<'a> {
             locations: vec![],
             scopes: vec![HashMap::default()],
             toggle_selection: BufferSelection::Rom,
+            traits: HashMap::default(),
             locals,
         }
     }
@@ -211,6 +222,103 @@ impl<'a> Compiler<'a> {
         Ok(members)
     }
 
+    fn validate_trait_functions(
+        &self,
+        trait_functions: &'a [FunctionHeader<'a>],
+        class_functions: &'a [Box<Statement<'a>>],
+    ) -> CompilerResult<'a, ()> {
+        let trait_functions_set: HashSet<&str, RandomState> = HashSet::from_iter(
+            trait_functions.iter()
+                .map(|tf| tf.name)
+        );
+        let functions_in_implementation = HashSet::from_iter(
+           class_functions.iter()
+               .map(|s|
+                   if let StatementType::Expression { expression } = &s.statement_type {
+                       if let ExpressionType::Binary { right, ..} = &expression.expression_type {
+                           if let ExpressionType::VariableLiteral { identifier } = &right.expression_type {
+                               identifier.clone()
+                           } else {
+                               panic!("Variable Literal expected, got {:?}", right);
+                           }
+                       } else {
+                           panic!("Binary expression expected, got {:?}", expression);
+                       }
+                   } else {
+                       panic!("Expression statement expected, got {:?}", s);
+                   }
+               )
+        );
+        if trait_functions_set != functions_in_implementation {
+            Err(self.create_single_error(format!(
+                "Expected functions: {:?}, got {:?}", trait_functions_set, functions_in_implementation
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn validate_trait_implementation(
+        &self,
+        trait_info: &TraitMembers<'a>,
+        methods: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+    ) -> CompilerResult<'a, ()> {
+        self.validate_trait_functions(trait_info.methods, methods)?;
+        self.validate_trait_functions(trait_info.getters, getters)?;
+        self.validate_trait_functions(trait_info.setters, setters)?;
+        self.validate_trait_functions(trait_info.static_methods, static_methods)?;
+        Ok(())
+    }
+
+    fn update_class(
+        &mut self,
+        class_name: &'a str,
+        methods: &HashMap<&'a str, &'a str>,
+    ) -> CompilerResult<'a, ()> {
+        let class_global = self.scopes[0].get(class_name).unwrap().clone();
+        let location = self.locations.len() - 1;
+        for (method_name, global_name) in methods {
+            let function_global = self.scopes[0].get(global_name).unwrap().clone();
+            let method_name_constant = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(method_name)));
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::GetGlobal(function_global),
+                location,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(method_name_constant),
+                location,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::GetGlobal(class_global),
+                location,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::ObjectSet,
+                location,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Swap,
+                location,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Pop,
+                location,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::SetGlobal(class_global),
+                location,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Pop,
+                location,
+            });
+        }
+        Ok(())
+    }
+
     fn store_class_members(
         &mut self,
         class_name: &'a str,
@@ -233,6 +341,16 @@ impl<'a> Compiler<'a> {
             location: self.locations.last().unwrap().clone(),
             message
         }]
+    }
+
+    fn new_global(&mut self, name: &'a str) -> usize {
+        if let Some(global_index) = self.scopes[0].get(name) {
+            *global_index
+        } else {
+            let global_index = self.scopes[0].len();
+            self.scopes[0].insert(name, global_index);
+            global_index
+        }
     }
 }
 
@@ -439,10 +557,30 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         let constant = self.constant_from_literal(ConstantValues::Class {
             name,
         });
+        let name_constant = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(name)));
+        let class_constant = self.constant_from_literal(
+            ConstantValues::Literal(Literal::QuotedString("@class")),
+        );
         let global_index = self.scopes[0].len();
         self.scopes[0].insert(name, global_index);
         self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(name_constant),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(class_constant),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::AddTag,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::AddTag,
             location: self.locations.len() - 1,
         });
         self.add_instruction(Instruction {
@@ -454,6 +592,120 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             location: self.locations.len() - 1,
         });
         Ok(())
+    }
+
+    fn pass_trait_declaration(
+        &mut self,
+        name: &'a str,
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        if let StatementType::TraitDeclaration {
+            methods, getters, setters, static_methods, ..
+        } = &statement.statement_type {
+            for fhs in [methods, getters, setters, static_methods].iter() {
+                for fh in fhs.iter() {
+                    self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(
+                        fh.name
+                    )));
+                }
+            }
+            self.traits.insert(name, TraitMembers {
+                methods, getters, setters, static_methods,
+            });
+            let trait_constant = self.constant_from_literal(
+                ConstantValues::Literal(Literal::QuotedString("@trait")),
+            );
+            let zero_constant = self.constant_from_literal(
+                ConstantValues::Literal(Literal::Integer(0)),
+            );
+            let global_index = self.new_global(name);
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(trait_constant),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(zero_constant),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::ObjectAlloc,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::AddTag,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::SetGlobal(global_index),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Pop,
+                location: self.locations.len() - 1,
+            });
+        }
+        Ok(())
+    }
+
+    fn pass_trait_implementation(
+        &mut self,
+        class_name: &'a Expression<'a>,
+        trait_name: &'a Expression<'a>,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        _statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        if let Some(trait_info) = self.traits.get(variable_or_module_name(trait_name)?) {
+            self.validate_trait_implementation(trait_info, methods, getters, setters, static_methods)?;
+        } else {
+            Err(self.create_single_error(format!("Trait does not exist: {:?}", trait_name)))?;
+        }
+        let new_methods = self.class_members_to_vec(methods)?;
+        let new_getters = self.class_members_to_vec(getters)?;
+        let new_setters = self.class_members_to_vec(setters)?;
+        let new_static_methods = self.class_members_to_vec(static_methods)?;
+        let class_name_value = variable_or_module_name(class_name)?;
+        if let Some(class_members) = self.class_members.get_mut(class_name_value) {
+            class_members.methods.extend(new_methods.iter());
+            class_members.getters.extend(new_getters.iter());
+            class_members.setters.extend(new_setters.iter());
+            class_members.static_methods.extend(new_static_methods.iter());
+            self.update_class(class_name_value, &new_methods)?;
+            self.update_class(class_name_value, &new_getters)?;
+            self.update_class(class_name_value, &new_setters)?;
+            self.update_class(class_name_value, &new_static_methods)?;
+            let class_name_value = variable_or_module_name(class_name)?;
+            let trait_name_value = variable_or_module_name(trait_name)?;
+            let global = *self.scopes[0].get(class_name_value).unwrap();
+            let trait_constant = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(
+                trait_name_value
+            )));
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(trait_constant),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::GetGlobal(global),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::AddTag,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::SetGlobal(global),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Pop,
+                location: self.locations.len() - 1,
+            });
+            Ok(())
+        } else {
+            Err(self.create_single_error(format!("class does not exist {:?}", class_name)))
+        }
     }
 
     fn pass_function_declaration(
@@ -470,13 +722,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
                 instruction_type: InstructionType::Constant(constant),
                 location: self.locations.len() - 1,
             });
-            let global_index = if let Some(global_index) = self.scopes[0].get(name) {
-                *global_index
-            } else {
-                let global_index = self.scopes[0].len();
-                self.scopes[0].insert(name, global_index);
-                global_index
-            };
+            let global_index = self.new_global(name);
             self.add_instruction(Instruction {
                 instruction_type: InstructionType::SetGlobal(global_index),
                 location: self.locations.len() - 1,
@@ -591,26 +837,58 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         value: &'a Expression<'a>,
         checked_type: &'a Type,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        self.pass_expression(value)?;
-        let type_index = match checked_type {
-            Type::Nil => 0,
-            Type::Boolean => 1,
-            Type::Integer => 2,
-            Type::Float => 3,
-            Type::String => 4,
-            Type::Function => 5,
-            Type::Array => 6,
-            _ => {
-                return Err(vec![ProgramError {
-                    location: self.locations.last().unwrap().clone(),
-                    message: format!("Type checking for {:?} not implemented yet", checked_type),
-                }]);
-            }
-        };
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::CheckType(type_index),
-            location: self.locations.len() - 1,
-        });
+        if checked_type.is_object_type() {
+            let tag_constant = match checked_type {
+                Type::Class => {
+                    self.constant_from_literal(
+                        ConstantValues::Literal(Literal::QuotedString("@class"))
+                    )
+                },
+                Type::Trait => {
+                    self.constant_from_literal(
+                        ConstantValues::Literal(Literal::QuotedString("@trait"))
+                    )
+                },
+                Type::UserDefined(expression) => {
+                    self.constant_from_literal(
+                        ConstantValues::Literal(Literal::QuotedString(
+                            variable_or_module_name(expression)?
+                        ))
+                    )
+                },
+                _ => panic!("Type is not object, as expected"),
+            };
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(tag_constant),
+                location: self.locations.len() - 1,
+            });
+            self.pass_expression(value)?;
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::CheckTag,
+                location: self.locations.len() - 1,
+            });
+        } else {
+            self.pass_expression(value)?;
+            let type_index = match checked_type {
+                Type::Nil => 0,
+                Type::Boolean => 1,
+                Type::Integer => 2,
+                Type::Float => 3,
+                Type::String => 4,
+                Type::Function => 5,
+                Type::Array => 6,
+                _ => {
+                    return Err(vec![ProgramError {
+                        location: self.locations.last().unwrap().clone(),
+                        message: format!("Type checking for {:?} not implemented yet", checked_type),
+                    }]);
+                }
+            };
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::CheckType(type_index),
+                location: self.locations.len() - 1,
+            });
+        }
         Ok(())
     }
 
@@ -632,9 +910,26 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         &mut self,
         callee: &'a Expression<'a>,
         value: &'a Expression<'a>,
+        property: &'a str,
     ) -> Result<(), Vec<ProgramError<'a>>> {
+        let property_constant = self.constant_from_literal(
+            ConstantValues::Literal(Literal::QuotedString(property)),
+        );
+        self.pass_expression(value)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(property_constant),
+            location: self.locations.len() - 1,
+        });
         self.pass_expression(callee)?;
-        self.pass_expression(value)
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ObjectSet,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Pop,
+            location: self.locations.len() - 1,
+        });
+        Ok(())
     }
 
     fn pass_variable_literal(

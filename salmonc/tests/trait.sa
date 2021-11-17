@@ -1,0 +1,25 @@
+trait Test {
+    test(a);
+    class staticmethod();
+}
+
+class TestImpl {
+    pepe() {}
+}
+
+trait Test for TestImpl {
+    test(a) {
+        print a;
+    }
+    class staticmethod() {
+        print "static";
+    }
+}
+
+var obj = TestImpl();
+obj.test("method");
+TestImpl.staticmethod();
+print Test istype Trait;
+print TestImpl istype Class;
+print TestImpl istype Test;
+print obj istype TestImpl;

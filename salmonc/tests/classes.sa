@@ -9,7 +9,9 @@ class DevonshireCream {
 
 print DevonshireCream;
 var obj = DevonshireCream();
+obj.prop = "test";
 print obj;
+print obj.prop;
 print DevonshireCream.serveOn();
 print obj.serveOn();
 print DevonshireCream.serveOn;

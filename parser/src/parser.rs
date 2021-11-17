@@ -203,7 +203,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         self.content.borrow_mut().peek().is_none()
     }
 
-    fn parse_method_set<T, C: Fn(&mut Vec<T>, &SourceCodeLocation<'a>, bool) -> Result<(), ProgramError<'a>>>(
+    fn parse_method_set<T, C: Fn(&mut Vec<T>, &SourceCodeLocation<'a>) -> Result<(), ProgramError<'a>>>(
         &self,
         location: &SourceCodeLocation<'a>,
         action: C,
@@ -213,11 +213,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         let mut setters = vec![];
         let mut getters = vec![];
         while !self.peek(TokenType::RightBrace) {
-            let mut is_static = false;
             let vector = match self.dry_next().map(|t| t.token_type) {
                 Some(TokenType::Class) => {
                     self.next();
-                    is_static = true;
                     &mut static_methods
                 }
                 Some(TokenType::Getter) => {
@@ -230,7 +228,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 }
                 _ => &mut methods,
             };
-            action(vector, location, is_static)?;
+            action(vector, location)?;
         }
         Ok(MethodSet {
             getters,
@@ -315,12 +313,8 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
             "Expected '{' before trait body",
             location,
         )?;
-        let method_set = self.parse_method_set(location, |vector, location, is_static| {
-            let mut arguments = if is_static {
-                vec![]
-            } else {
-                vec!["this"]
-            };
+        let method_set = self.parse_method_set(location, |vector, location| {
+            let mut arguments = vec!["this"];
             let (name, extra_arguments) = self.parse_function_header(location)?;
             arguments.extend(&extra_arguments);
             self.consume(
@@ -409,8 +403,8 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
         &self,
         location: &SourceCodeLocation<'a>,
     ) -> Result<MethodSet<Box<Statement<'a>>>, ProgramError<'a>> {
-        let method_set = self.parse_method_set(&location, |vector, location, is_static| {
-            let f = Box::new(self.parse_function(location, !is_static)?);
+        let method_set = self.parse_method_set(&location, |vector, location| {
+            let f = Box::new(self.parse_function(location, true)?);
             vector.push(f);
             Ok(())
         })?;

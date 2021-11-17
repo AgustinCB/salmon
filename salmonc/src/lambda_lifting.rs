@@ -18,6 +18,7 @@ pub struct LambdaLifting<'a> {
     scopes: Vec<HashMap<&'a str, &'a str>>,
     statement_factory: StatementFactory,
     statement_changes: HashMap<usize, StatementType<'a>>,
+    trait_counter: usize,
 }
 
 impl<'a> LambdaLifting<'a> {
@@ -36,6 +37,7 @@ impl<'a> LambdaLifting<'a> {
             output: Vec::default(),
             scopes: vec![HashMap::default()],
             statement_changes: HashMap::default(),
+            trait_counter: 0,
             expression_factory,
             locals,
             statement_factory,
@@ -114,11 +116,22 @@ impl<'a> LambdaLifting<'a> {
 
 type LambdaLiftingResult<'a> = (Vec<Statement<'a>>, HashMap<usize, ExpressionType<'a>>, HashMap<usize, StatementType<'a>>);
 
+pub fn variable_or_module_name<'a>(expression: &'a Expression<'a>) -> Result<&'a str, Vec<ProgramError<'a>>> {
+    match expression.expression_type {
+        ExpressionType::VariableLiteral { identifier } => Ok(identifier),
+        _ => Err(vec![ProgramError {
+            location: expression.location.clone(),
+            message: "Expected variable literal".to_string()
+        }])?,
+    }
+}
+
 impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
     fn run(&mut self, ss: &'a [Statement<'a>]) -> Result<LambdaLiftingResult<'a>, Vec<ProgramError<'a>>> {
         for s in ss {
             self.current_location = Some(s.location.clone());
-            if self.scopes.len() == 1 && !s.is_function_declaration() && !s.is_class_declaration() {
+            if self.scopes.len() == 1 && !s.is_function_declaration() &&
+                !s.is_class_declaration() && !s.is_trait_declaration() {
                 self.output.push(s.clone());
             }
             self.pass(s)?;
@@ -163,6 +176,113 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
                 self.current_location.clone().unwrap()
             ),
         });
+        Ok(())
+    }
+
+    fn pass_class_declaration(
+        &mut self,
+        name: &'a str,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        _superclass: &'a Option<Expression<'a>>,
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let new_class_name = leak_reference(format!("@class{}", self.class_counter));
+        self.class_counter += 1;
+        let scope = self.scopes.len()-1;
+        self.scopes[scope].insert(name, new_class_name);
+        self.scopes.push(HashMap::default());
+        let new_methods = self.class_methods_to_variable_accessors(methods)?;
+        let new_static_methods = self.class_methods_to_variable_accessors(static_methods)?;
+        let new_getters = self.class_methods_to_variable_accessors(getters)?;
+        let new_setters = self.class_methods_to_variable_accessors(setters)?;
+        self.scopes.pop();
+        self.output.push(self.statement_factory.new_statement(
+            statement.location.clone(),
+            StatementType::ClassDeclaration {
+                name: new_class_name,
+                superclass: None,
+                methods: new_methods,
+                static_methods: new_static_methods,
+                getters: new_getters,
+                setters: new_setters,
+            },
+        ));
+        Ok(())
+    }
+
+    fn pass_trait_declaration(
+        &mut self,
+        name: &'a str,
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let new_trait_name = leak_reference(format!("@trait{}", self.trait_counter));
+        self.trait_counter += 1;
+        let scope = self.scopes.len()-1;
+        self.scopes[scope].insert(name, new_trait_name);
+        if let StatementType::TraitDeclaration {
+            methods, getters, setters, static_methods, ..
+        } = &statement.statement_type {
+            self.output.push(self.statement_factory.new_statement(
+                statement.location.clone(),
+                StatementType::TraitDeclaration {
+                    name: new_trait_name,
+                    methods: methods.clone(),
+                    getters: getters.clone(),
+                    setters: setters.clone(),
+                    static_methods: static_methods.clone()
+                }
+            ));
+        }
+        Ok(())
+    }
+
+    fn pass_trait_implementation(
+        &mut self,
+        class_name: &'a Expression<'a>,
+        trait_name: &'a Expression<'a>,
+        methods: &'a [Box<Statement<'a>>],
+        static_methods: &'a [Box<Statement<'a>>],
+        setters: &'a [Box<Statement<'a>>],
+        getters: &'a [Box<Statement<'a>>],
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        if let (Some(trait_scope), Some(class_scope)) =
+            (self.locals.get(&trait_name.id()).cloned(), self.locals.get(&class_name.id()).cloned()) {
+            let class_name_value = variable_or_module_name(class_name)?;
+            let trait_name_value = variable_or_module_name(trait_name)?;
+            if let (Some(new_class_name), Some(new_trait_name)) =
+                (self.scopes[class_scope].get(class_name_value).cloned(), self.scopes[trait_scope].get(trait_name_value).cloned()) {
+                self.scopes.push(HashMap::default());
+                let new_methods = self.class_methods_to_variable_accessors(methods)?;
+                let new_static_methods = self.class_methods_to_variable_accessors(static_methods)?;
+                let new_getters = self.class_methods_to_variable_accessors(getters)?;
+                let new_setters = self.class_methods_to_variable_accessors(setters)?;
+                self.scopes.pop();
+                self.statement_changes.insert(statement.id(), StatementType::TraitImplementation {
+                    class_name: self.expression_factory.new_expression(
+                        ExpressionType::VariableLiteral { identifier: new_class_name },
+                        class_name.location.clone(),
+                    ),
+                    trait_name: self.expression_factory.new_expression(
+                        ExpressionType::VariableLiteral { identifier: new_trait_name },
+                        trait_name.location.clone(),
+                    ),
+                    methods: new_methods,
+                    static_methods: new_static_methods,
+                    getters: new_getters,
+                    setters: new_setters,
+                });
+            }
+            if trait_scope > 0 && trait_scope < self.scopes.len() - 1 {
+                self.missed_locals.last_mut().unwrap().insert(trait_name_value);
+            }
+            if class_scope > 0 && class_scope < self.scopes.len() - 1 {
+                self.missed_locals.last_mut().unwrap().insert(class_name_value);
+            }
+        }
         Ok(())
     }
 
@@ -222,40 +342,6 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         Ok(())
     }
 
-    fn pass_class_declaration(
-        &mut self,
-        name: &'a str,
-        methods: &'a [Box<Statement<'a>>],
-        static_methods: &'a [Box<Statement<'a>>],
-        setters: &'a [Box<Statement<'a>>],
-        getters: &'a [Box<Statement<'a>>],
-        _superclass: &'a Option<Expression<'a>>,
-        statement: &'a Statement<'a>,
-    ) -> Result<(), Vec<ProgramError<'a>>> {
-        let new_class_name = leak_reference(format!("@class{}", self.class_counter));
-        self.class_counter += 1;
-        let scope = self.scopes.len()-1;
-        self.scopes[scope].insert(name, new_class_name);
-        self.scopes.push(HashMap::default());
-        let new_methods = self.class_methods_to_variable_accessors(methods)?;
-        let new_static_methods = self.class_methods_to_variable_accessors(static_methods)?;
-        let new_getters = self.class_methods_to_variable_accessors(getters)?;
-        let new_setters = self.class_methods_to_variable_accessors(setters)?;
-        self.scopes.pop();
-        self.output.push(self.statement_factory.new_statement(
-            statement.location.clone(),
-            StatementType::ClassDeclaration {
-                name: new_class_name,
-                superclass: None,
-                methods: new_methods,
-                static_methods: new_static_methods,
-                getters: new_getters,
-                setters: new_setters,
-            },
-        ));
-        Ok(())
-    }
-
     fn pass_variable_literal(
         &mut self,
         identifier: &'a str,
@@ -263,7 +349,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
     ) -> Result<(), Vec<ProgramError<'a>>> {
         let expression_id = expression.id();
         if let Some(scope) = self.locals.get(&expression_id).cloned() {
-            if let Some(new_identifier) = self.scopes[scope].get(identifier).cloned() {
+            if let Some(new_identifier) = self.scopes.get(scope).map(|v| v.get(identifier)).flatten().cloned() {
                 self.changes.insert(expression_id, ExpressionType::VariableLiteral {
                     identifier: new_identifier,
                 });
