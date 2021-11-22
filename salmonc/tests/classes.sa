@@ -5,13 +5,22 @@ class DevonshireCream {
   serveWith(condiment) {
     return condiment;
   }
+  getter testProp() {
+    return this.internal;
+  }
+  setter testProp(a) {
+    this.internal = a;
+    return a;
+  }
 }
 
 print DevonshireCream;
 var obj = DevonshireCream();
 obj.prop = "test";
+obj.testProp = "testProp 111";
 print obj;
 print obj.prop;
+print obj.testProp;
 print DevonshireCream.serveOn();
 print obj.serveOn();
 print DevonshireCream.serveOn;

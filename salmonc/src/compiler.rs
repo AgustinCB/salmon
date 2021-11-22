@@ -2,7 +2,7 @@ use ahash::{AHashMap as HashMap, RandomState};
 use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type, StatementType, ExpressionType, FunctionHeader};
 use smoked::instruction::{Instruction, InstructionType};
 use std::collections::{BTreeMap, HashSet};
-use crate::lambda_lifting::variable_or_module_name;
+use crate::lambda_lifting::{variable_or_module_name, leak_reference};
 use std::iter::FromIterator;
 
 #[derive(Debug, PartialEq)]
@@ -190,7 +190,7 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn class_members_to_vec(&mut self, statements: &'a [Box<Statement<'a>>]) -> CompilerResult<'a, HashMap<&'a str, &'a str>> {
+    fn class_members_to_vec(&mut self, statements: &'a [Box<Statement<'a>>], prefix: Option<&'static str>) -> CompilerResult<'a, HashMap<&'a str, &'a str>> {
         let mut members = HashMap::default();
         for s in statements {
             if let StatementType::Expression { expression, .. } = &s.statement_type {
@@ -206,12 +206,16 @@ impl<'a> Compiler<'a> {
                     }
                 } = &expression.expression_type {
                     let _ = self.constant_from_literal(ConstantValues::Literal(
+                        Literal::QuotedString(*new_name)
+                    ));
+                    let storing_name = leak_reference(format!("{}{}", prefix.unwrap_or(""), name)).as_str();
+                    let _ = self.constant_from_literal(ConstantValues::Literal(
                         Literal::QuotedString(*name)
                     ));
                     let _ = self.constant_from_literal(ConstantValues::Literal(
-                        Literal::QuotedString(*new_name)
+                        Literal::QuotedString(storing_name)
                     ));
-                    members.insert(*name, *new_name);
+                    members.insert(storing_name, *new_name);
                 } else {
                     return Err(self.create_single_error("Expected variable literal on class member".to_string()))
                 }
@@ -327,10 +331,10 @@ impl<'a> Compiler<'a> {
         setters: &'a [Box<Statement<'a>>],
         static_methods: &'a [Box<Statement<'a>>],
     ) -> CompilerResult<'a, ()> {
-        let methods = self.class_members_to_vec(methods)?;
-        let getters = self.class_members_to_vec(getters)?;
-        let setters = self.class_members_to_vec(setters)?;
-        let static_methods = self.class_members_to_vec(static_methods)?;
+        let methods = self.class_members_to_vec(methods, None)?;
+        let getters = self.class_members_to_vec(getters, Some("@getter_"))?;
+        let setters = self.class_members_to_vec(setters, Some("@setter_"))?;
+        let static_methods = self.class_members_to_vec(static_methods, None)?;
         let members = ClassMembers { methods, getters, setters, static_methods };
         self.class_members.insert(class_name, members);
         Ok(())
@@ -662,10 +666,10 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         } else {
             Err(self.create_single_error(format!("Trait does not exist: {:?}", trait_name)))?;
         }
-        let new_methods = self.class_members_to_vec(methods)?;
-        let new_getters = self.class_members_to_vec(getters)?;
-        let new_setters = self.class_members_to_vec(setters)?;
-        let new_static_methods = self.class_members_to_vec(static_methods)?;
+        let new_methods = self.class_members_to_vec(methods, None)?;
+        let new_getters = self.class_members_to_vec(getters, Some("@getter_"))?;
+        let new_setters = self.class_members_to_vec(setters, Some("@setter_"))?;
+        let new_static_methods = self.class_members_to_vec(static_methods, None)?;
         let class_name_value = variable_or_module_name(class_name)?;
         if let Some(class_members) = self.class_members.get_mut(class_name_value) {
             class_members.methods.extend(new_methods.iter());
@@ -894,11 +898,54 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
 
     fn pass_get(&mut self, callee: &'a Expression<'a>, property: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
         let constant = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(property)));
+        let getter_constant = self.constant_from_literal(ConstantValues::Literal(
+            Literal::QuotedString(
+                leak_reference(format!("{}{}", "@getter_", property)).as_str()
+            )
+        ));
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(getter_constant),
+            location: self.locations.len() - 1,
+        });
+        self.pass_expression(callee)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ObjectHas,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::JmpIfFalse(5),
+            location: self.locations.len() - 1,
+        });
+        // logic for getter
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(getter_constant),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Swap,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ObjectGet,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Call,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Jmp(3),
+            location: self.locations.len() - 1,
+        });
+        // logic for property
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(constant),
             location: self.locations.len() - 1,
         });
-        self.pass_expression(callee)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Swap,
+            location: self.locations.len() - 1,
+        });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::ObjectGet,
             location: self.locations.len() - 1,
@@ -915,12 +962,55 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         let property_constant = self.constant_from_literal(
             ConstantValues::Literal(Literal::QuotedString(property)),
         );
+        let setter_constant = self.constant_from_literal(ConstantValues::Literal(
+            Literal::QuotedString(
+                leak_reference(format!("{}{}", "@setter_", property)).as_str()
+            )
+        ));
         self.pass_expression(value)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(setter_constant),
+            location: self.locations.len() - 1,
+        });
+        self.pass_expression(callee)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ObjectHas,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::JmpIfFalse(5),
+            location: self.locations.len() - 1,
+        });
+        // setter logic
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(setter_constant),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Swap,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ObjectGet,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Call,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Jmp(4),
+            location: self.locations.len() - 1,
+        });
+        // property logic
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(property_constant),
             location: self.locations.len() - 1,
         });
-        self.pass_expression(callee)?;
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Swap,
+            location: self.locations.len() - 1,
+        });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::ObjectSet,
             location: self.locations.len() - 1,

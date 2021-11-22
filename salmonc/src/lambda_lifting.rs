@@ -1,7 +1,7 @@
 use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression, StatementFactory, ExpressionFactory, TokenType};
 use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 
-fn leak_reference<'a, T>(s: T) -> &'a T {
+pub fn leak_reference<'a, T>(s: T) -> &'a T {
     Box::leak(Box::new(s))
 }
 
