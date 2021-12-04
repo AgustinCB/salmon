@@ -555,9 +555,6 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         _statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         self.store_class_members(name, methods, getters, setters, static_methods)?;
-        if let Some(e) = superclass {
-            self.pass_expression(e)?;
-        }
         let constant = self.constant_from_literal(ConstantValues::Class {
             name,
         });
@@ -587,6 +584,38 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             instruction_type: InstructionType::AddTag,
             location: self.locations.len() - 1,
         });
+        if let Some(e) = superclass {
+            let super_constant = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString("super")));
+            self.pass_expression(e)?;
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Call,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Swap,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(super_constant),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Swap,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::ObjectSet,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Swap,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::ObjectMerge,
+                location: self.locations.len() - 1,
+            });
+        }
         self.add_instruction(Instruction {
             instruction_type: InstructionType::SetGlobal(global_index),
             location: self.locations.len() - 1,

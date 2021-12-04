@@ -112,6 +112,28 @@ impl<'a> LambdaLifting<'a> {
             }
         }).collect()
     }
+
+    fn change_variable_literal(
+        &mut self,
+        identifier: &'a str,
+        expression: &'a Expression<'a>,
+    ) -> Option<ExpressionType<'a>> {
+        let expression_id = expression.id();
+        if let Some(scope) = self.locals.get(&expression_id).cloned() {
+            if scope > 0 && scope < self.scopes.len() - 1 {
+                self.missed_locals.last_mut().unwrap().insert(identifier);
+            }
+            if let Some(new_identifier) = self.scopes.get(scope).map(|v| v.get(identifier)).flatten().cloned() {
+                Some(ExpressionType::VariableLiteral {
+                    identifier: new_identifier,
+                })
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 type LambdaLiftingResult<'a> = (Vec<Statement<'a>>, HashMap<usize, ExpressionType<'a>>, HashMap<usize, StatementType<'a>>);
@@ -186,7 +208,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         static_methods: &'a [Box<Statement<'a>>],
         setters: &'a [Box<Statement<'a>>],
         getters: &'a [Box<Statement<'a>>],
-        _superclass: &'a Option<Expression<'a>>,
+        superclass: &'a Option<Expression<'a>>,
         statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         let new_class_name = leak_reference(format!("@class{}", self.class_counter));
@@ -198,12 +220,26 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         let new_static_methods = self.class_methods_to_variable_accessors(static_methods)?;
         let new_getters = self.class_methods_to_variable_accessors(getters)?;
         let new_setters = self.class_methods_to_variable_accessors(setters)?;
+        let new_superclass = match superclass {
+            Some(s) => {
+                match &s.expression_type {
+                    ExpressionType::VariableLiteral { identifier } => {
+                        self.change_variable_literal(identifier, s)
+                            .map(|et| {
+                                self.expression_factory.new_expression(et, s.location.clone())
+                            })
+                    }
+                    _ => None,
+                }
+            },
+            _ => None,
+        };
         self.scopes.pop();
         self.output.push(self.statement_factory.new_statement(
             statement.location.clone(),
             StatementType::ClassDeclaration {
                 name: new_class_name,
-                superclass: None,
+                superclass: new_superclass,
                 methods: new_methods,
                 static_methods: new_static_methods,
                 getters: new_getters,
@@ -348,15 +384,11 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         let expression_id = expression.id();
-        if let Some(scope) = self.locals.get(&expression_id).cloned() {
-            if let Some(new_identifier) = self.scopes.get(scope).map(|v| v.get(identifier)).flatten().cloned() {
-                self.changes.insert(expression_id, ExpressionType::VariableLiteral {
-                    identifier: new_identifier,
-                });
+        match self.change_variable_literal(identifier, expression) {
+            Some(new_expression_type) => {
+                self.changes.insert(expression_id, new_expression_type);
             }
-            if scope > 0 && scope < self.scopes.len() - 1 {
-                self.missed_locals.last_mut().unwrap().insert(identifier);
-            }
+            _ => {}
         }
         Ok(())
     }
