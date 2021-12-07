@@ -129,7 +129,7 @@ fn create_vm<'a>(
                 let name_bytes = name.as_bytes();
                 memory.extend_from_slice(name_bytes);
                 last_address += name_bytes.len();
-                constants.push(Value::Object { capacity, address, tags });
+                constants.push(Value::Object { address, tags });
             }
         }
     }
