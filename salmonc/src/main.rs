@@ -11,7 +11,7 @@ use std::env::Args;
 use std::io::{Read, Write};
 use std::fs::File;
 use std::process::exit;
-use smoked::cpu::{Value, Location};
+use smoked::cpu::{Value, Location, USIZE_SIZE};
 use smoked::instruction::Instruction;
 use smoked::serde::to_bytes;
 use ahash::{AHashMap as HashMap};
@@ -123,6 +123,11 @@ fn create_vm<'a>(
                     members_bytes.extend_from_slice(content);
                 });
                 let capacity = members_bytes.len();
+                last_address += USIZE_SIZE;
+                let last_address_bytes: &[u8] = unsafe {
+                    std::slice::from_raw_parts(&last_address as *const usize as *const u8, size_of::<usize>())
+                };
+                memory.extend_from_slice(last_address_bytes);
                 last_address += capacity;
                 memory.extend_from_slice(&members_bytes);
                 let tags = last_address;
