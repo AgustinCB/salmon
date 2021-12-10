@@ -402,6 +402,13 @@ impl<'a> Statement<'a> {
             _ => false,
         }
     }
+
+    pub fn is_module_declaration(&self) -> bool {
+        match self.statement_type {
+            StatementType::Module {..} => true,
+            _ => false,
+        }
+    }
 }
 
 pub struct DebugStatements<'a>(pub &'a [Statement<'a>]);

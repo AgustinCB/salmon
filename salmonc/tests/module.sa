@@ -1,0 +1,51 @@
+mod test {
+    fun test() {
+        print "hola";
+    }
+
+    class TestClass {
+        testmethod() {
+            print "hola method";
+        }
+    }
+
+    trait TestTrait {
+        echo(a);
+    }
+
+    var variable = 1;
+    fun test1() {
+        print variable;
+    }
+}
+
+test::test();
+
+trait MyTrait {
+    mytraitmethod();
+}
+
+class Impl < test::TestClass {}
+
+trait MyTrait for test::TestClass {
+    mytraitmethod() {
+        print "my trait method";
+    }
+}
+
+var c = test::TestClass();
+c.testmethod();
+c.mytraitmethod();
+
+trait test::TestTrait for Impl {
+  echo(a) {
+      print a;
+  }
+}
+
+var i = Impl();
+i.echo("pepe");
+i.testmethod();
+
+print test::variable;
+test::test1();

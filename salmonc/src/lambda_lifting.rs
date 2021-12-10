@@ -15,6 +15,7 @@ pub struct LambdaLifting<'a> {
     function_counter: usize,
     locals: HashMap<usize, usize>,
     missed_locals: Vec<HashSet<&'a str>>,
+    module_counter: usize,
     output: Vec<Statement<'a>>,
     scopes: Vec<HashMap<&'a str, &'a str>>,
     statement_factory: StatementFactory,
@@ -36,6 +37,7 @@ impl<'a> LambdaLifting<'a> {
             current_location: None,
             function_counter: 0,
             missed_locals: Vec::default(),
+            module_counter: 0,
             output: Vec::default(),
             scopes: vec![HashMap::default()],
             statement_changes: HashMap::default(),
@@ -167,7 +169,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         for s in ss {
             self.current_location = Some(s.location.clone());
             if self.scopes.len() == 1 && !s.is_function_declaration() &&
-                !s.is_class_declaration() && !s.is_trait_declaration() {
+                !s.is_class_declaration() && !s.is_trait_declaration() && !s.is_module_declaration() {
                 self.output.push(s.clone());
             }
             self.pass(s)?;
@@ -456,6 +458,26 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         self.changes.insert(expression.id(), ExpressionType::VariableLiteral {
             identifier: new_function_name,
         });
+        Ok(())
+    }
+
+    fn pass_module(
+        &mut self,
+        name: &'a str,
+        statements: &'a mut [Box<Statement<'a>>],
+        statement: &'a Statement<'a>,
+    ) -> Result<(), Vec<ProgramError<'a>>> {
+        let new_module_name = leak_reference(format!("@module{}", self.module_counter));
+        self.module_counter += 1;
+        let scope = self.scopes.len()-1;
+        self.scopes[scope].insert(name, new_module_name);
+        self.output.push(self.statement_factory.new_statement(
+            statement.location.clone(),
+            StatementType::Module {
+                name: new_module_name,
+                statements: statements.to_vec(),
+            },
+        ));
         Ok(())
     }
 }
