@@ -474,12 +474,12 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         };
         let array_size = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(context_variables.len() as _)));
         for context_variable in context_variables {
-            let scope = (&self.scopes[1..]).iter().rev()
+            let local_in_scope = (&self.scopes[1..]).iter().rev()
                 .find(|scope| scope.get(context_variable).is_some())
                 .map(|scope| *scope.get(context_variable).unwrap());
-            if let Some(scope) = scope {
+            if let Some(local) = local_in_scope {
                 self.add_instruction(Instruction {
-                    instruction_type: InstructionType::Uplift(scope),
+                    instruction_type: InstructionType::Uplift(local),
                     location: self.locations.len() - 1,
                 });
             } else {
