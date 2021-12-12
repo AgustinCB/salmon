@@ -37,12 +37,13 @@ impl<'a> MutPass<'a, ()> for Changes<'a> {
                 self.pass_variable_declaration(name, expression)?,
             StatementType::ClassDeclaration {
                 name,
+                properties,
                 methods,
                 static_methods,
                 setters,
                 getters,
                 superclass,
-            } => self.pass_class_declaration(name, methods, static_methods, setters, getters, superclass)?,
+            } => self.pass_class_declaration(name, properties, methods, static_methods, setters, getters, superclass)?,
             StatementType::TraitDeclaration { name, .. } =>
                 self.pass_trait_declaration(name)?,
             StatementType::TraitImplementation {

@@ -508,6 +508,7 @@ impl<'a> Interpreter<'a> {
             }
             StatementType::ClassDeclaration {
                 getters,
+                properties,
                 name,
                 methods,
                 setters,

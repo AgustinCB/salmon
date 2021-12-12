@@ -356,6 +356,19 @@ impl<'a> Compiler<'a> {
             global_index
         }
     }
+
+    fn expression_or_nil(&mut self, expression: &'a Option<Expression<'a>>) -> CompilerResult<'a, ()> {
+        if let Some(e) = expression {
+            self.pass_expression(e)?;
+        } else {
+            let c0 = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(c0),
+                location: self.locations.len() - 1,
+            });
+        }
+        Ok(())
+    }
 }
 
 impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
@@ -527,15 +540,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         if scope_id > 0 {
             self.scopes[scope_id].insert(identifier, var_id);
         }
-        if let Some(e) = expression {
-            self.pass_expression(e)?;
-        } else {
-            let c0 = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
-            self.add_instruction(Instruction {
-                instruction_type: InstructionType::Constant(c0),
-                location: self.locations.len() - 1,
-            });
-        }
+        self.expression_or_nil(expression)?;
         self.add_set_instruction(scope_id, var_id);
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Pop,
@@ -547,6 +552,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
     fn pass_class_declaration(
         &mut self,
         name: &'a str,
+        properties: &'a [Box<Statement<'a>>],
         methods: &'a [Box<Statement<'a>>],
         static_methods: &'a [Box<Statement<'a>>],
         setters: &'a [Box<Statement<'a>>],
@@ -615,6 +621,39 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
                 instruction_type: InstructionType::ObjectMerge,
                 location: self.locations.len() - 1,
             });
+        }
+        for property in properties {
+            if let StatementType::VariableDeclaration { expression, name} = &property.statement_type {
+                self.locations.push(property.location.clone());
+                self.expression_or_nil(expression)?;
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Swap,
+                    location: self.locations.len() - 1,
+                });
+                let property_constant = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(name)));
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Constant(property_constant),
+                    location: self.locations.len() - 1,
+                });
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Swap,
+                    location: self.locations.len() - 1,
+                });
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::ObjectSet,
+                    location: self.locations.len() - 1,
+                });
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Swap,
+                    location: self.locations.len() - 1,
+                });
+                self.add_instruction(Instruction {
+                    instruction_type: InstructionType::Pop,
+                    location: self.locations.len() - 1,
+                });
+            } else {
+                Err(self.create_single_error("Expecting variable declaration statement".to_owned()))?;
+            }
         }
         self.add_instruction(Instruction {
             instruction_type: InstructionType::SetGlobal(global_index),
@@ -1057,6 +1096,9 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         if let Some(scope_id) = self.locals.get(&expression.id()).cloned() {
+            if identifier == "internal" {
+                eprintln!("{:?}", self.scopes[scope_id]);
+            }
             let var_id = *self.scopes[scope_id].get(identifier).unwrap();
             if scope_id == 0 {
                 self.add_instruction(Instruction {

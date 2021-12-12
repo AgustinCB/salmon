@@ -1,0 +1,22 @@
+class Test {
+  var internal = "initial";
+  testProp1() {
+    fun accessor() {
+      print this.internal;
+    }
+    return accessor;
+  }
+  getter testProp() {
+    return internal;
+  }
+  setter testProp(a) {
+    internal = a;
+    return a;
+  }
+}
+
+var obj = Test();
+print obj.testProp;
+obj.testProp = "testProp 111";
+print obj.testProp;
+obj.testProp1()();

@@ -373,6 +373,7 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 "Expected '{' before class body",
                 &location,
             )?;
+            let properties = self.parse_class_properties()?;
             let method_set = self.parse_class_methods(&location)?;
             self.consume(
                 TokenType::RightBrace,
@@ -384,10 +385,11 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 location,
                 StatementType::ClassDeclaration {
                     getters: method_set.getters,
-                    name,
                     methods: method_set.methods,
                     setters: method_set.setters,
                     static_methods: method_set.static_methods,
+                    name,
+                    properties,
                     superclass,
                 },
             ))
@@ -397,6 +399,15 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                 location: location.clone(),
             })
         }
+    }
+
+    fn parse_class_properties(&self) -> Result<Vec<Box<Statement<'a>>>, ProgramError<'a>> {
+        let mut result = vec![];
+        while let Some(Token { token_type: TokenType::Var, location }) = self.dry_next() {
+            let s = self.parse_var_statement(&location)?;
+            result.push(Box::new(s));
+        }
+        Ok(result)
     }
 
     fn parse_class_methods(
@@ -680,9 +691,9 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
                         StatementType::VariableDeclaration { name, expression },
                     ))
                 }
-                _ => Err(ProgramError {
+                t => Err(ProgramError {
                     location: location.clone(),
-                    message: "Invalid variable declaration!".to_owned(),
+                    message: format!("Invalid variable declaration! Unexpected {:?}", t),
                 }),
             }
         } else {

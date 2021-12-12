@@ -329,6 +329,7 @@ pub enum StatementType<'a> {
     ClassDeclaration {
         name: &'a str,
         superclass: Option<Expression<'a>>,
+        properties: Vec<Box<Statement<'a>>>,
         methods: Vec<Box<Statement<'a>>>,
         static_methods: Vec<Box<Statement<'a>>>,
         getters: Vec<Box<Statement<'a>>>,
@@ -429,13 +430,14 @@ pub trait MutPass<'a, R> {
             StatementType::VariableDeclaration { expression, name } =>
                 self.pass_variable_declaration(name, expression)?,
             StatementType::ClassDeclaration {
-                name,
-                methods,
-                static_methods,
-                setters,
                 getters,
+                methods,
+                name,
+                properties,
+                setters,
+                static_methods,
                 superclass,
-            } => self.pass_class_declaration(name, methods, static_methods, setters, getters, superclass)?,
+            } => self.pass_class_declaration(name, properties, methods, static_methods, setters, getters, superclass)?,
             StatementType::TraitDeclaration { name, .. } =>
                 self.pass_trait_declaration(name)?,
             StatementType::TraitImplementation {
@@ -578,13 +580,14 @@ pub trait MutPass<'a, R> {
     fn pass_class_declaration(
         &mut self,
         _name: &'a str,
+        properties:  &'a mut [Box<Statement<'a>>],
         methods: &'a mut [Box<Statement<'a>>],
         static_methods: &'a mut [Box<Statement<'a>>],
         setters: &'a mut [Box<Statement<'a>>],
         getters: &'a mut [Box<Statement<'a>>],
         superclass: &'a mut Option<Expression<'a>>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        for ss in vec![methods, static_methods, setters, getters] {
+        for ss in vec![properties, methods, static_methods, setters, getters] {
             for s in ss.iter_mut() {
                 self.pass(s)?;
             }
@@ -816,13 +819,14 @@ pub trait Pass<'a, R> {
             StatementType::VariableDeclaration { expression, name } =>
                 self.pass_variable_declaration(name, expression, statement)?,
             StatementType::ClassDeclaration {
-                name,
+                getters,
                 methods,
+                name,
+                properties,
                 static_methods,
                 setters,
-                getters,
                 superclass,
-            } => self.pass_class_declaration(name, methods, static_methods, setters, getters, superclass, statement)?,
+            } => self.pass_class_declaration(name, properties, methods, static_methods, setters, getters, superclass, statement)?,
             StatementType::TraitDeclaration { name, .. } =>
                 self.pass_trait_declaration(name, statement)?,
             StatementType::TraitImplementation {
@@ -968,6 +972,7 @@ pub trait Pass<'a, R> {
     fn pass_class_declaration(
         &mut self,
         _name: &'a str,
+        properties: &'a [Box<Statement<'a>>],
         methods: &'a [Box<Statement<'a>>],
         static_methods: &'a [Box<Statement<'a>>],
         setters: &'a [Box<Statement<'a>>],
@@ -975,7 +980,7 @@ pub trait Pass<'a, R> {
         superclass: &'a Option<Expression<'a>>,
         _statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
-        for ss in vec![methods, static_methods, setters, getters] {
+        for ss in vec![properties, methods, static_methods, setters, getters] {
             for s in ss {
                 self.pass(s)?;
             }

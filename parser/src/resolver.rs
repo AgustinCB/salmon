@@ -233,6 +233,7 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
     fn pass_class_declaration(
         &mut self,
         name: &'a str,
+        properties: &'a [Box<Statement<'a>>],
         methods: &'a [Box<Statement<'a>>],
         static_methods: &'a [Box<Statement<'a>>],
         setters: &'a [Box<Statement<'a>>],
@@ -257,6 +258,11 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
             }
         }
         self.push_scope(HashMap::default());
+        for property in properties {
+            if let StatementType::VariableDeclaration { name, expression } = &property.statement_type {
+                self.pass_variable_declaration(name, expression, property)?;
+            }
+        }
         self.resolve_functions(methods, true)?;
         self.resolve_functions(getters, false)?;
         self.resolve_functions(setters, false)?;

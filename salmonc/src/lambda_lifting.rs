@@ -9,6 +9,7 @@ pub struct LambdaLifting<'a> {
     change_name: bool,
     changes: HashMap<usize, ExpressionType<'a>>,
     class_counter: usize,
+    class_scope: Option<usize>,
     current_location: Option<SourceCodeLocation<'a>>,
     expression_factory: ExpressionFactory,
     function_counter: usize,
@@ -31,6 +32,7 @@ impl<'a> LambdaLifting<'a> {
             change_name: true,
             changes: HashMap::default(),
             class_counter: 0,
+            class_scope: None,
             current_location: None,
             function_counter: 0,
             missed_locals: Vec::default(),
@@ -121,7 +123,19 @@ impl<'a> LambdaLifting<'a> {
         let expression_id = expression.id();
         if let Some(scope) = self.locals.get(&expression_id).cloned() {
             if scope > 0 && scope < self.scopes.len() - 1 {
-                self.missed_locals.last_mut().unwrap().insert(identifier);
+                if self.class_scope.unwrap_or(0) == scope {
+                    return Some(ExpressionType::Get {
+                        callee: Box::new(self.expression_factory.new_expression(
+                            ExpressionType::VariableLiteral {
+                                identifier: "this",
+                            },
+                            expression.location.clone()
+                        )),
+                        property: identifier,
+                    });
+                } else {
+                    self.missed_locals.last_mut().unwrap().insert(identifier);
+                }
             }
             if let Some(new_identifier) = self.scopes.get(scope).map(|v| v.get(identifier)).flatten().cloned() {
                 Some(ExpressionType::VariableLiteral {
@@ -204,6 +218,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
     fn pass_class_declaration(
         &mut self,
         name: &'a str,
+        properties: &'a [Box<Statement<'a>>],
         methods: &'a [Box<Statement<'a>>],
         static_methods: &'a [Box<Statement<'a>>],
         setters: &'a [Box<Statement<'a>>],
@@ -216,6 +231,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         let scope = self.scopes.len()-1;
         self.scopes[scope].insert(name, new_class_name);
         self.scopes.push(HashMap::default());
+        self.class_scope = Some(scope+1);
         let new_methods = self.class_methods_to_variable_accessors(methods)?;
         let new_static_methods = self.class_methods_to_variable_accessors(static_methods)?;
         let new_getters = self.class_methods_to_variable_accessors(getters)?;
@@ -235,10 +251,12 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
             _ => None,
         };
         self.scopes.pop();
+        self.class_scope = None;
         self.output.push(self.statement_factory.new_statement(
             statement.location.clone(),
             StatementType::ClassDeclaration {
                 name: new_class_name,
+                properties: properties.to_vec(),
                 superclass: new_superclass,
                 methods: new_methods,
                 static_methods: new_static_methods,
@@ -395,10 +413,32 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
 
     fn pass_variable_assignment(
         &mut self,
-        _identifier: &'a str,
+        identifier: &'a str,
         value: &'a Expression<'a>,
-        _expression: &'a Expression<'a>,
+        expression: &'a Expression<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
+        let expression_id = expression.id();
+        if let Some(scope) = self.locals.get(&expression_id).cloned() {
+            if scope > 0 && scope < self.scopes.len() - 1 {
+                if self.class_scope.unwrap_or(0) == scope {
+                    self.changes.insert(
+                        expression_id,
+                        ExpressionType::Set {
+                            callee: Box::new(self.expression_factory.new_expression(
+                                ExpressionType::VariableLiteral {
+                                    identifier: "this",
+                                },
+                                expression.location.clone()
+                            )),
+                            property: identifier,
+                            value: Box::new(value.clone()),
+                        }
+                    );
+                } else {
+                    self.missed_locals.last_mut().unwrap().insert(identifier);
+                }
+            }
+        }
         self.pass_expression(value)?;
         Ok(())
     }
