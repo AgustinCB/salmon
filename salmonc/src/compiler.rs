@@ -369,6 +369,15 @@ impl<'a> Compiler<'a> {
         }
         Ok(())
     }
+
+    fn save_trait_constants(&mut self, headers: &[FunctionHeader], prefix: Option<&'a str>) {
+        for fh in headers.iter() {
+            let storing_name = leak_reference(format!("{}{}", prefix.unwrap_or(""), fh.name)).as_str();
+            self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(
+                storing_name
+            )));
+        }
+    }
 }
 
 impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
@@ -685,29 +694,10 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         if let StatementType::TraitDeclaration {
             methods, getters, setters, static_methods, ..
         } = &statement.statement_type {
-            for fh in methods.iter() {
-                self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(
-                    fh.name
-                )));
-            }
-            for fh in getters.iter() {
-                let storing_name = leak_reference(format!("@getter_{}", fh.name)).as_str();
-                self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(
-                    storing_name
-                )));
-            }
-            for fh in setters.iter() {
-                let storing_name = leak_reference(format!("@setter_{}", fh.name)).as_str();
-                self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(
-                    storing_name
-                )));
-            }
-            for fh in static_methods.iter() {
-                let storing_name = leak_reference(format!("@static_{}", fh.name)).as_str();
-                self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(
-                    storing_name
-                )));
-            }
+            self.save_trait_constants(methods, None);
+            self.save_trait_constants(getters, Some("@getter_"));
+            self.save_trait_constants(setters, Some("@setter_"));
+            self.save_trait_constants(static_methods, Some("@static_"));
             self.traits.insert(name, TraitMembers {
                 methods, getters, setters, static_methods,
             });
