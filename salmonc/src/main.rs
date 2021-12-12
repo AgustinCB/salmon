@@ -104,7 +104,6 @@ fn create_vm<'a>(
                 constants.push(function)
             },
             ConstantValues::Class { name } => {
-                let address = last_address;
                 let members_length = class_members.get(name).unwrap().length();
                 let members_length_bytes: &[u8] = unsafe {
                     std::slice::from_raw_parts(&members_length as *const usize as *const u8, size_of::<usize>())
@@ -123,6 +122,7 @@ fn create_vm<'a>(
                     members_bytes.extend_from_slice(content);
                 });
                 let capacity = members_bytes.len();
+                let address = last_address;
                 last_address += USIZE_SIZE;
                 let last_address_bytes: &[u8] = unsafe {
                     std::slice::from_raw_parts(&last_address as *const usize as *const u8, size_of::<usize>())

@@ -26,8 +26,6 @@ obj1.prop = "test1";
 obj1.testProp = "testProp 1111";
 print obj1.prop;
 print obj1.testProp;
-print DevonshireCream.serveOn();
 print obj.serveOn();
-print DevonshireCream.serveOn;
 print obj.serveOn;
 print obj.serveWith("cream");
