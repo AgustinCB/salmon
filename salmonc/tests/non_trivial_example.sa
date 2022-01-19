@@ -1,0 +1,62 @@
+class TestModule {
+    var variable = 1;
+
+    init() {
+        variable = variable + 1;
+    }
+
+    test() {
+        print "hola";
+    }
+
+    test1() {
+        print variable;
+    }
+}
+
+trait TestTrait {
+    echo(a);
+}
+
+class TestClass < TestModule {
+    init() {
+        this.super.init();
+    }
+    testmethod() {
+        print "hola method";
+        print this.super.variable;
+    }
+}
+
+trait MyTrait {
+    mytraitmethod();
+}
+
+class Impl < TestClass {}
+
+trait MyTrait for TestClass {
+    mytraitmethod() {
+        print "my trait method";
+    }
+}
+
+trait TestTrait for Impl {
+  echo(a) {
+      print a;
+  }
+}
+var test = TestModule();
+
+test.test();
+
+var c = TestClass();
+c.testmethod();
+c.mytraitmethod();
+
+var i = Impl();
+i.echo("pepe");
+i.super.testmethod();
+i.testmethod();
+
+print test.variable;
+test.test1();

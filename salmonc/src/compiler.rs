@@ -28,6 +28,7 @@ pub enum BufferSelection {
 
 type CompilerResult<'a, R> = Result<R, Vec<ProgramError<'a>>>;
 
+#[derive(Debug)]
 pub struct ClassMembers<'a> {
     methods: HashMap<&'a str, &'a str>,
     getters: HashMap<&'a str, &'a str>,
@@ -1304,12 +1305,23 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             location: self.locations.len() - 1,
         });
         self.add_instruction(Instruction {
-            instruction_type: InstructionType::JmpIfFalse(3),
+            instruction_type: InstructionType::JmpIfFalse(19),
             location: self.locations.len() - 1,
         });
         let class_constant = self.constant_from_literal(
             ConstantValues::Literal(Literal::QuotedString("@class")),
         );
+        let init_method = self.constant_from_literal(
+            ConstantValues::Literal(Literal::QuotedString("init")),
+        );
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(init_method),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Swap,
+            location: self.locations.len() - 1,
+        });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(class_constant),
             location: self.locations.len() - 1,
@@ -1320,6 +1332,71 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::RemoveTag,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Call,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ObjectHas,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::JmpIfFalse(12),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Duplicate,
+            location: self.locations.len() - 1,
+        });
+        let scope_id = self.scopes.len() - 1;
+        let var_id = self.scopes[scope_id].len();
+        let identifier = leak_reference(format!("@internal{}{}", scope_id, var_id));
+        self.scopes[scope_id].insert(&identifier, var_id);
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Constant(init_method),
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Swap,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::ObjectGet,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Swap,
+            location: self.locations.len() - 1,
+        });
+        self.add_set_instruction(scope_id, var_id);
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Pop,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Call,
+            location: self.locations.len() - 1,
+        });
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Pop,
+            location: self.locations.len() - 1,
+        });
+        if scope_id > 0 {
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::GetLocal(var_id),
+                location: self.locations.len() - 1,
+            });
+        } else {
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::GetGlobal(var_id),
+                location: self.locations.len() - 1,
+            });
+        }
+        self.scopes[scope_id].remove(identifier.as_str());
+        self.add_instruction(Instruction {
+            instruction_type: InstructionType::Jmp(1),
             location: self.locations.len() - 1,
         });
         self.add_instruction(Instruction {

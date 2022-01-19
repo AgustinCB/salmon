@@ -464,7 +464,7 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
     fn pass_module(
         &mut self,
         name: &'a str,
-        statements: &'a mut [Box<Statement<'a>>],
+        statements: &'a [Box<Statement<'a>>],
         statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
         let new_module_name = leak_reference(format!("@module{}", self.module_counter));

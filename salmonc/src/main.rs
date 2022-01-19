@@ -28,6 +28,7 @@ struct Config {
     input: Option<String>,
     output: Option<String>,
     show_instructions: bool,
+    show_statements: bool,
 }
 
 fn parse_config(args: &mut Args) -> Config {
@@ -35,6 +36,7 @@ fn parse_config(args: &mut Args) -> Config {
     let mut output = None;
     let mut paths = vec![".".to_owned()];
     let mut show_instructions = false;
+    let mut show_statements = false;
     while !args.is_empty() {
         let arg = args.next().unwrap();
         match arg.as_str() {
@@ -43,6 +45,9 @@ fn parse_config(args: &mut Args) -> Config {
             },
             "-i" | "--instructions" => {
                 show_instructions = true;
+            },
+            "-s" | "--show-statements" => {
+                show_statements = true;
             },
             f if input.is_none() => input = Some(f.to_owned()),
             f if input.is_some() && output.is_none() => output = Some(f.to_owned()),
@@ -54,6 +59,7 @@ fn parse_config(args: &mut Args) -> Config {
         output,
         paths,
         show_instructions,
+        show_statements,
     }
 }
 
@@ -164,14 +170,22 @@ fn create_vm<'a>(
 
 fn rearrenge_function_declarations(ss: Vec<Statement>) -> Vec<Statement> {
     let mut functions = vec![];
+    let mut traits = vec![];
+    let mut classes = vec![];
     let mut others = vec![];
     for s in ss {
         if s.is_function_declaration() {
             functions.push(s);
+        } else if s.is_trait_declaration() {
+            traits.push(s);
+        } else if s.is_class_declaration() {
+            classes.push(s);
         } else {
-            others.push(s)
+            others.push(s);
         }
     }
+    functions.extend_from_slice(&traits);
+    functions.extend_from_slice(&classes);
     functions.extend_from_slice(&others);
     functions
 }
@@ -204,14 +218,16 @@ fn main() {
     let ss_ref: *mut Vec<Statement<'_>> = &mut ss as *mut _;
     handle_result(changes::Changes::new(changes, statement_changes).run(unsafe { ss_ref.as_mut() }.unwrap()));
     let ss = rearrenge_function_declarations(ss);
-    //eprintln!("{:?}", DebugStatements(&ss));
+    if config.show_statements {
+        eprintln!("{:?}", DebugStatements(&ss));
+    }
     let locals = handle_result(Resolver::new_without_check_used().run(&ss));
     let mut c = compiler::Compiler::new(locals);
     let instructions = handle_result(c.run(&ss));
     let (literals, locations, class_members) = (c.constants, c.locations, c.class_members);
     if config.show_instructions {
-        println!("Instructions: {:?}", instructions);
-        println!("Literals: {:?}", &literals);
+        eprintln!("Instructions: {:?}", instructions);
+        eprintln!("Literals: {:?}", &literals);
     } else {
         let vm = create_vm(literals, class_members, locations, instructions).unwrap();
         output.write_all(&vm).unwrap();
