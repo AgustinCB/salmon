@@ -1,10 +1,10 @@
-use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use crate::function::LoxFunction;
 use crate::class::{LoxObject, LoxClass};
 use crate::state::State;
 use crate::value::{Value, ValueError, LoxTrait, LoxArray};
 use parser::types::{Expression, ExpressionType, FunctionHeader, ProgramError, SourceCodeLocation, Statement, StatementType, TokenType, Type};
 use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::convert::{TryInto, TryFrom};
 use std::iter::FromIterator;
 use std::ops::{Add, Div, Mul, Sub};

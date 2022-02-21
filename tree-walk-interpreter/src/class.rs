@@ -1,8 +1,8 @@
-use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 use crate::function::LoxFunction;
 use crate::value::Value;
 use parser::types::{ProgramError, SourceCodeLocation, Statement, StatementType};
 use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use crate::interpreter::Interpreter;
 

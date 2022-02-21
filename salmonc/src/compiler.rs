@@ -1,7 +1,6 @@
-use ahash::{AHashMap as HashMap, RandomState};
 use parser::types::{Pass, ProgramError, Statement, Expression, Literal, SourceCodeLocation, TokenType, DataKeyword, Type, StatementType, ExpressionType, FunctionHeader};
 use smoked::instruction::{Instruction, InstructionType};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::lambda_lifting::{variable_or_module_name, leak_reference};
 use std::iter::FromIterator;
 
@@ -232,7 +231,7 @@ impl<'a> Compiler<'a> {
         trait_functions: &'a [FunctionHeader<'a>],
         class_functions: &'a [Box<Statement<'a>>],
     ) -> CompilerResult<'a, ()> {
-        let trait_functions_set: HashSet<&str, RandomState> = HashSet::from_iter(
+        let trait_functions_set: HashSet<&str> = HashSet::from_iter(
             trait_functions.iter()
                 .map(|tf| tf.name)
         );
@@ -435,7 +434,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
 
     fn pass_uplift_class_variables(&mut self, name: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
         let nil_constant = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
-        let members = self.class_members.get(name).ok_or(self.create_single_error("Class not declared yet".to_string()))?;
+        let members = self.class_members.get(name).ok_or(self.create_single_error(format!("Class {} not declared yet", name)))?;
         let mut names = vec![];
         members.for_each_member(|_, m| {
             names.push(m.clone());

@@ -49,6 +49,16 @@ var test = TestModule();
 
 test.test();
 
+fun counter() {
+    class CounterClass {
+        var counter = 0;
+        addone() {
+            counter = counter + 1;
+        }
+    }
+    return CounterClass();
+}
+
 var c = TestClass();
 c.testmethod();
 c.mytraitmethod();
@@ -60,3 +70,8 @@ i.testmethod();
 
 print test.variable;
 test.test1();
+
+var c1 = counter();
+print c1.counter;
+c1.addone();
+print c1.counter;

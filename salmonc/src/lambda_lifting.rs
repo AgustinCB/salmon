@@ -1,5 +1,5 @@
+use std::collections::{HashMap, HashSet};
 use parser::types::{Statement, ProgramError, Pass, StatementType, SourceCodeLocation, ExpressionType, Expression, StatementFactory, ExpressionFactory, TokenType};
-use ahash::{AHashMap as HashMap, AHashSet as HashSet};
 
 pub fn leak_reference<'a, T>(s: T) -> &'a T {
     Box::leak(Box::new(s))
@@ -365,8 +365,8 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         let mut new_body = vec![];
         for s in body.iter() {
             self.pass(s)?;
-            let statement = if s.is_function_declaration() {
-                if let StatementType::FunctionDeclaration { name, .. } = s.statement_type {
+            let statement = match &s.statement_type {
+                StatementType::FunctionDeclaration { name, .. } =>
                     Box::new(self.statement_factory.new_statement(
                         s.location.clone(),
                         StatementType::Expression {
@@ -375,12 +375,18 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
                                 s.location.clone(),
                             )
                         },
-                    ))
-                } else {
-                    panic!("Last statement should be a function!")
-                }
-            } else {
-                s.clone()
+                    )),
+                StatementType::ClassDeclaration { name, .. } =>
+                    Box::new(self.statement_factory.new_statement(
+                        s.location.clone(),
+                        StatementType::Expression {
+                            expression: self.expression_factory.new_expression(
+                                ExpressionType::UpliftClassVariables(self.scopes[self.scopes.len()-1][name]),
+                                s.location.clone(),
+                            )
+                        },
+                    )),
+                _ => s.clone(),
             };
             new_body.push(statement);
         }
@@ -471,6 +477,8 @@ impl<'a> Pass<'a, LambdaLiftingResult<'a>> for LambdaLifting<'a> {
         self.module_counter += 1;
         let scope = self.scopes.len()-1;
         self.scopes[scope].insert(name, new_module_name);
+        self.scopes.push(HashMap::default());
+        self.scopes.pop();
         self.output.push(self.statement_factory.new_statement(
             statement.location.clone(),
             StatementType::Module {

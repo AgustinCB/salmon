@@ -1,7 +1,7 @@
 #![feature(exact_size_is_empty)]
 #![feature(box_patterns)]
 
-use failure::Error;
+use std::collections::HashMap;
 use parser::lexer::Lexer;
 use parser::parser::Parser;
 use parser::resolver::Resolver;
@@ -14,7 +14,6 @@ use std::process::exit;
 use smoked::cpu::{Value, Location, USIZE_SIZE};
 use smoked::instruction::Instruction;
 use smoked::serde::to_bytes;
-use ahash::{AHashMap as HashMap};
 use crate::compiler::{ConstantValues, ClassMembers};
 use crate::lambda_lifting::LambdaLifting;
 use std::mem::size_of;
@@ -78,7 +77,7 @@ fn create_vm<'a>(
     class_members: HashMap<&'a str, ClassMembers<'a>>,
     source_code_locations: Vec<SourceCodeLocation<'a>>,
     rom: Vec<Instruction>,
-) -> Result<Vec<u8>, Error> {
+) -> Vec<u8> {
     let mut last_address = 0usize;
     let mut constants = vec![];
     let mut locations = vec![];
@@ -86,7 +85,7 @@ fn create_vm<'a>(
     let mut memory = vec![];
     let mut string_address: HashMap<&'a str, usize> = HashMap::default();
     let mut functions: HashMap<&'a str, Value> = HashMap::default();
-    for c in literals.iter() {
+    for (i, c) in literals.iter().enumerate() {
         match c {
             ConstantValues::Literal(Literal::QuotedString(s)) => {
                 if string_address.get(s).is_none() {
@@ -94,21 +93,27 @@ fn create_vm<'a>(
                     last_address += s.len();
                     string_address.insert(s, address);
                     memory.extend_from_slice(s.as_bytes());
-                    constants.push(Value::String(address));
+                    constants.push((i, Value::String(address)));
                 } else {
-                    constants.push(Value::String(string_address[*s]));
+                    constants.push((i, Value::String(string_address[*s])));
                 }
             }
-            ConstantValues::Literal(Literal::Integer(i)) => constants.push(Value::Integer(*i)),
-            ConstantValues::Literal(Literal::Float(f)) => constants.push(Value::Float(*f)),
-            ConstantValues::Literal(Literal::Keyword(DataKeyword::True)) => constants.push(Value::Bool(true)),
-            ConstantValues::Literal(Literal::Keyword(DataKeyword::False)) => constants.push(Value::Bool(false)),
-            ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)) => constants.push(Value::Nil),
+            ConstantValues::Literal(Literal::Integer(v)) => constants.push((i, Value::Integer(*v))),
+            ConstantValues::Literal(Literal::Float(f)) => constants.push((i, Value::Float(*f))),
+            ConstantValues::Literal(Literal::Keyword(DataKeyword::True)) => constants.push((i, Value::Bool(true))),
+            ConstantValues::Literal(Literal::Keyword(DataKeyword::False)) => constants.push((i, Value::Bool(false))),
+            ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)) => constants.push((i, Value::Nil)),
             ConstantValues::Function { arity, ip, name, .. } => {
                 let function = Value::Function { ip: *ip, arity: *arity, uplifts: None };
                 functions.insert(name, function.clone());
-                constants.push(function)
+                constants.push((i, function))
             },
+            _ => {}
+        }
+    }
+
+    for (i, c) in literals.iter().enumerate() {
+        match c {
             ConstantValues::Class { name } => {
                 let members_length = class_members.get(name).unwrap().length();
                 let members_length_bytes: &[u8] = unsafe {
@@ -140,10 +145,13 @@ fn create_vm<'a>(
                 let name_bytes = name.as_bytes();
                 memory.extend_from_slice(name_bytes);
                 last_address += name_bytes.len();
-                constants.push(Value::Object { address, tags });
+                constants.push((i, Value::Object { address, tags }));
             }
+            _ => {}
         }
     }
+    constants.sort_by(|v1, v2| v1.0.cmp(&v2.0));
+    let mut constants = constants.into_iter().map(|v| v.1).collect::<Vec<_>>();
 
     for scl in source_code_locations.iter() {
         if location_indexes.get(scl).is_none() {
@@ -165,27 +173,23 @@ fn create_vm<'a>(
             });
         }
     }
-    Ok(to_bytes(&constants, &locations, &memory, &rom))
+    to_bytes(&constants, &locations, &memory, &rom)
 }
 
 fn rearrenge_function_declarations(ss: Vec<Statement>) -> Vec<Statement> {
     let mut functions = vec![];
     let mut traits = vec![];
-    let mut classes = vec![];
     let mut others = vec![];
     for s in ss {
-        if s.is_function_declaration() {
+        if s.is_function_declaration() || s.is_class_declaration() {
             functions.push(s);
         } else if s.is_trait_declaration() {
             traits.push(s);
-        } else if s.is_class_declaration() {
-            classes.push(s);
         } else {
             others.push(s);
         }
     }
     functions.extend_from_slice(&traits);
-    functions.extend_from_slice(&classes);
     functions.extend_from_slice(&others);
     functions
 }
@@ -229,7 +233,7 @@ fn main() {
         eprintln!("Instructions: {:?}", instructions);
         eprintln!("Literals: {:?}", &literals);
     } else {
-        let vm = create_vm(literals, class_members, locations, instructions).unwrap();
+        let vm = create_vm(literals, class_members, locations, instructions);
         output.write_all(&vm).unwrap();
     }
 }

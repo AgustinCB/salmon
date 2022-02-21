@@ -1,4 +1,4 @@
-use ahash::{AHashMap as HashMap};
+use std::collections::HashMap;
 use parser::types::{ExpressionType, MutPass, ProgramError, Statement, StatementType, Expression};
 
 pub struct Changes<'a> {

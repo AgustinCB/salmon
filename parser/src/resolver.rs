@@ -1,5 +1,5 @@
+use std::collections::HashMap;
 use crate::types::{Expression, ExpressionType, ProgramError, SourceCodeLocation, Statement, StatementType, Pass};
-use ahash::{AHashMap as HashMap};
 
 pub struct Resolver<'a> {
     check_used: bool,

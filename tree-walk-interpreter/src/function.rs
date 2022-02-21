@@ -1,7 +1,7 @@
-use ahash::{AHashMap as HashMap};
 use crate::value::Value;
 use parser::types::{ProgramError, SourceCodeLocation, Statement};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::{Debug, Error, Formatter};
 use std::rc::Rc;
 use crate::interpreter::Interpreter;
