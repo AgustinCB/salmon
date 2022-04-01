@@ -49,6 +49,19 @@ var test = TestModule();
 
 test.test();
 
+fun counter1() {
+    var counter = 0;
+    class CounterClass {
+        addone(offset) {
+            counter = counter + offset;
+        }
+        getCounter() {
+            return counter;
+        }
+    }
+    return CounterClass();
+}
+
 fun counter() {
     class CounterClass {
         var counter = 0;
@@ -75,3 +88,8 @@ var c1 = counter();
 print c1.counter;
 c1.addone();
 print c1.counter;
+
+var c2 = counter1();
+print c2.getCounter();
+c2.addone(1);
+print c2.getCounter();

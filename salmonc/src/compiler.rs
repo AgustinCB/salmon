@@ -156,11 +156,11 @@ impl<'a> Compiler<'a> {
         let previous = self.toggle_selection;
         let prev_functions_size = self.function_instructions.len(); self.toggle_selection(BufferSelection::Function);
         let mut new_scope = HashMap::default();
-        for (i, n) in context_variables.iter().cloned().enumerate() {
+        for (i, n) in arguments.iter().cloned().enumerate() {
             new_scope.insert(n, i);
         }
-        for (i, n) in arguments.iter().cloned().enumerate() {
-            new_scope.insert(n, i+context_variables.len());
+        for (i, n) in context_variables.iter().cloned().enumerate() {
+            new_scope.insert(n, i+arguments.len());
         }
         self.scopes.push(new_scope);
         for s in body {
@@ -434,13 +434,43 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
 
     fn pass_uplift_class_variables(&mut self, name: &'a str) -> Result<(), Vec<ProgramError<'a>>> {
         let nil_constant = self.constant_from_literal(ConstantValues::Literal(Literal::Keyword(DataKeyword::Nil)));
+        let class_constant = self.constant_from_literal(ConstantValues::Class { name });
         let members = self.class_members.get(name).ok_or(self.create_single_error(format!("Class {} not declared yet", name)))?;
         let mut names = vec![];
-        members.for_each_member(|_, m| {
-            names.push(m.clone());
+        members.for_each_member(|k, m| {
+            names.push((k.clone(), m.clone()));
         });
-        for name in names {
+        for (key, name) in names {
+            let key_constant = self.constant_from_literal(ConstantValues::Literal(Literal::QuotedString(key)));
             self.pass_uplift_function_variables(name)?;
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Duplicate,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::JmpIfFalse(4),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(key_constant),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Constant(class_constant),
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::ObjectSet,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Pop,
+                location: self.locations.len() - 1,
+            });
+            self.add_instruction(Instruction {
+                instruction_type: InstructionType::Pop,
+                location: self.locations.len() - 1,
+            });
         }
         self.add_instruction(Instruction {
             instruction_type: InstructionType::Constant(nil_constant),
@@ -525,10 +555,6 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         });
         self.add_instruction(Instruction {
             instruction_type: InstructionType::AttachArray(global),
-            location: self.locations.len() - 1,
-        });
-        self.add_instruction(Instruction {
-            instruction_type: InstructionType::Constant(nil_constant),
             location: self.locations.len() - 1,
         });
         Ok(())
