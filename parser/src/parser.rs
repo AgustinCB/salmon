@@ -1316,14 +1316,30 @@ impl<'a, I: Iterator<Item = Token<'a>>> Parser<'a, I> {
     fn parse_variable_or_module_access(&self, name: &'a str, location: &SourceCodeLocation<'a>) -> Result<Expression<'a>, ProgramError<'a>> {
         if self.peek(TokenType::DoubleColon) {
             self.consume(TokenType::DoubleColon, "Expected `::` on module access", location)?;
-            let field = Box::new(self.parse_call()?);
-            Ok(self.expression_factory.borrow_mut().new_expression(
-                ExpressionType::ModuleLiteral {
-                    module: name,
-                    field,
-                },
-                location.clone(),
-            ))
+            match self.next() {
+                Some(Token {
+                    token_type: TokenType::Identifier { name: identifier },
+                    location,
+                }) => {
+                    let field = Box::new(self.expression_factory.borrow_mut().new_expression(
+                        ExpressionType::VariableLiteral {
+                            identifier,
+                        },
+                        location.clone(),
+                    ));
+                    Ok(self.expression_factory.borrow_mut().new_expression(
+                        ExpressionType::ModuleLiteral {
+                            field,
+                            module: name,
+                        },
+                        location,
+                    ))
+                }
+                v => Err(ProgramError {
+                    message: format!("Expected identifier token, but got {:?}", v),
+                    location: location.clone(),
+                })
+            }
         } else {
             Ok(self.expression_factory.borrow_mut().new_expression(
                 ExpressionType::VariableLiteral { identifier: name },

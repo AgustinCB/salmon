@@ -1,4 +1,8 @@
 mod test {
+    var variable = 1;
+    variable = variable + 1;
+    var variable1 = "eeeh?";
+
     fun test() {
         print "hola";
     }
@@ -14,12 +18,13 @@ mod test {
         echo(a);
     }
 
-    var variable = 1;
-    variable = variable + 1;
     fun test1() {
         print variable;
     }
 }
+
+print test::variable1;
+print test::variable;
 
 test::test();
 

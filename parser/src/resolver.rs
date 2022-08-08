@@ -181,6 +181,12 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
         statements: &'a [Box<Statement<'a>>],
         statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
+        if self.scopes.len() > 1 {
+            return Err(vec![ProgramError {
+                message: "Module statements should be global".to_owned(),
+                location: statement.location.clone(),
+            }]);
+        }
         self.declare(name, &statement.location)
             .map_err(|e| vec![e])?;
         self.define(name);
@@ -197,6 +203,12 @@ impl<'a> Pass<'a, HashMap<usize, usize>> for Resolver<'a> {
         name: &'a str,
         statement: &'a Statement<'a>,
     ) -> Result<(), Vec<ProgramError<'a>>> {
+        if self.scopes.len() > 1 {
+            return Err(vec![ProgramError {
+                message: "Import statements should be global".to_owned(),
+                location: statement.location.clone(),
+            }]);
+        }
         self.declare(name, &statement.location)
             .map_err(|e| vec![e])?;
         self.define(name);

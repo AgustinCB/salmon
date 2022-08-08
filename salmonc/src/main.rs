@@ -1,5 +1,7 @@
 #![feature(exact_size_is_empty)]
 #![feature(box_patterns)]
+#![feature(let_chains)]
+#![feature(pattern)]
 
 use std::collections::HashMap;
 use parser::lexer::Lexer;
@@ -28,6 +30,7 @@ struct Config {
     output: Option<String>,
     show_instructions: bool,
     show_statements: bool,
+    show_resulting_statements: bool,
 }
 
 fn parse_config(args: &mut Args) -> Config {
@@ -36,6 +39,7 @@ fn parse_config(args: &mut Args) -> Config {
     let mut paths = vec![".".to_owned()];
     let mut show_instructions = false;
     let mut show_statements = false;
+    let mut show_resulting_statements = false;
     while !args.is_empty() {
         let arg = args.next().unwrap();
         match arg.as_str() {
@@ -48,6 +52,9 @@ fn parse_config(args: &mut Args) -> Config {
             "-s" | "--show-statements" => {
                 show_statements = true;
             },
+            "-r" | "--show-resulting-statements" => {
+                show_resulting_statements = true;
+            },
             f if input.is_none() => input = Some(f.to_owned()),
             f if input.is_some() && output.is_none() => output = Some(f.to_owned()),
             s => panic!("Unexpected argument {}", s)
@@ -58,6 +65,7 @@ fn parse_config(args: &mut Args) -> Config {
         output,
         paths,
         show_instructions,
+        show_resulting_statements,
         show_statements,
     }
 }
@@ -217,12 +225,15 @@ fn main() {
             parser.parse()
         });
     let (ss, statement_factory, expression_factory) = handle_result(result);
+    if config.show_statements {
+        eprintln!("{:?}", DebugStatements(&ss));
+    }
     let locals = handle_result(Resolver::new().run(&ss));
     let (mut ss, changes, statement_changes) = handle_result(LambdaLifting::new(locals.clone(), statement_factory, expression_factory).run(&ss));
     let ss_ref: *mut Vec<Statement<'_>> = &mut ss as *mut _;
     handle_result(changes::Changes::new(changes, statement_changes).run(unsafe { ss_ref.as_mut() }.unwrap()));
     let ss = rearrenge_function_declarations(ss);
-    if config.show_statements {
+    if config.show_resulting_statements {
         eprintln!("{:?}", DebugStatements(&ss));
     }
     let locals = handle_result(Resolver::new_without_check_used().run(&ss));

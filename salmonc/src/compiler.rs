@@ -217,10 +217,10 @@ impl<'a> Compiler<'a> {
                     ));
                     members.insert(storing_name, *new_name);
                 } else {
-                    return Err(self.create_single_error("Expected variable literal on class member".to_string()))
+                    return Err(self.create_single_error(format!("Expected binary expression on class member, got {:?}", expression.expression_type)))
                 }
             } else {
-                return Err(self.create_single_error("Expected expression statement on class member".to_string()))
+                return Err(self.create_single_error(format!("Expected expression statement on class member, got {:?}", s.statement_type)))
             }
         }
         Ok(members)
@@ -526,7 +526,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
         };
         let array_size = self.constant_from_literal(ConstantValues::Literal(Literal::Integer(context_variables.len() as _)));
         for context_variable in context_variables {
-            let local_in_scope = (&self.scopes[1..]).iter().rev()
+            let local_in_scope = (&self.scopes[0..]).iter().rev()
                 .find(|scope| scope.get(context_variable).is_some())
                 .map(|scope| *scope.get(context_variable).unwrap());
             if let Some(local) = local_in_scope {
@@ -537,7 +537,7 @@ impl<'a> Pass<'a, Vec<Instruction>> for Compiler<'a> {
             } else {
                 return Err(vec![ProgramError {
                     location: self.locations.last().unwrap().clone(),
-                    message: format!("Context variable {} was not found", context_variable),
+                    message: format!("Context variable {} was not found in function {}", context_variable, name),
                 }]);
             }
         }
